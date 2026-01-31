@@ -22,40 +22,52 @@ except ImportError as e:
 client = TestClient(app)
 
 
-def test_propose_event_invalid_period_returns_400():
-    """Invalid period returns 400."""
-    r = client.post(
-        "/events",
-        json={"name": "Test", "period": "2d"},
-    )
-    assert r.status_code == 400
+def test_propose_event_without_window_uses_default():
+    """Omitting windowMinutes uses default (24h)."""
+    with patch("agent.propose_agent.initial_reasonability_check", return_value={"pass": True, "reason": "ok"}):
+        with patch("agent.propose_agent.select_tools_and_config") as mock_config:
+            mock_config.return_value = {
+                "tools": ["hn_frontpage", "reddit"],
+                "keywords": ["test"],
+                "exclusions": [],
+                "window_minutes": 1440,
+                "source_url": None,
+                "description": None,
+            }
+            with patch("backend.src.routes.events.build_index", new_callable=AsyncMock) as mock_build:
+                mock_build.return_value = (100.0, {"Hacker News": 0.0, "Reddit": 0.0})
+                with patch("agent.propose_agent.should_accept_event", return_value={"accept": True, "reason": "ok"}):
+                    r = client.post("/events", json={"name": "Test"})
+    assert r.status_code == 201
+    assert r.json()["status"] == "open"
 
 
 def test_propose_event_missing_name_returns_400():
     """Missing or empty name returns 400."""
     r = client.post(
         "/events",
-        json={"name": "", "period": "1h"},
+        json={"name": ""},
     )
     assert r.status_code == 400
 
 
 def test_propose_event_initial_check_rejection_returns_rejected():
-    """When initial reasonability check fails (e.g. 'some mess'), event is rejected."""
+    """When initial reasonability check fails (e.g. 'some mess'), event is rejected and not stored."""
     with patch("agent.propose_agent.initial_reasonability_check") as mock_check:
         mock_check.return_value = {"pass": False, "reason": "No relevant results; input appears to be nonsense."}
         r = client.post(
             "/events",
-            json={"name": "some mess", "period": "1h"},
+            json={"name": "some mess"},
         )
     assert r.status_code == 201
     data = r.json()
     assert data["status"] == "rejected"
     assert data["name"] == "some mess"
+    assert "rejectReason" in data
 
 
-def test_propose_event_valid_period_1h():
-    """Valid period 1h is accepted in body."""
+def test_propose_event_valid_window_accepted():
+    """Valid windowMinutes is accepted in body."""
     with patch("agent.propose_agent.initial_reasonability_check", return_value={"pass": True, "reason": "ok"}):
         with patch("agent.propose_agent.select_tools_and_config") as mock_config:
             mock_config.return_value = {
@@ -71,7 +83,7 @@ def test_propose_event_valid_period_1h():
                 with patch("agent.propose_agent.should_accept_event", return_value={"accept": True, "reason": "ok"}):
                     r = client.post(
                         "/events",
-                        json={"name": "Cursor Hackathon", "period": "1h"},
+                        json={"name": "Cursor Hackathon"},
                     )
     assert r.status_code == 201
     data = r.json()

@@ -6,6 +6,10 @@ import os
 import sys
 from contextlib import asynccontextmanager
 
+from dotenv import load_dotenv
+
+load_dotenv()  # Load .env from cwd (project root when running uvicorn from project root)
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 

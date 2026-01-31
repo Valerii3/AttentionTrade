@@ -1,24 +1,31 @@
+import logging
 import uuid
 from datetime import datetime, timezone, timedelta
-from typing import Literal, Optional
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from backend.src.constants import period_to_minutes
 from backend.src.db import queries as db
 from backend.src.services.trading import prices_from_position
 from backend.src.services.index_pipeline import get_iso_now, build_index
 from backend.src.services.tools import get_available_tools
 
 router = APIRouter(prefix="/events", tags=["events"])
+logger = logging.getLogger(__name__)
 
-VALID_PERIODS = ("1h", "8h", "24h", "1w")
 
+DEFAULT_WINDOW_MINUTES = 1440  # 24h
 
 class ProposeEventBody(BaseModel):
     name: str
-    period: Literal["1h", "8h", "24h", "1w"]
+    windowMinutes: Optional[int] = None  # optional; default 24h
+    sourceUrl: Optional[str] = None
+    description: Optional[str] = None
+
+
+class SuggestWindowBody(BaseModel):
+    name: str
     sourceUrl: Optional[str] = None
     description: Optional[str] = None
 
@@ -51,9 +58,10 @@ def _event_to_response(e: dict) -> dict:
 
 
 async def _event_to_response_async(e: dict) -> dict:
+    # Synthetic rejected events are not in DB; get_position returns 0,0 for unknown id
     net_up, net_down = await db.get_position(e["id"])
     price_up, price_down = prices_from_position(net_up, net_down)
-    return {
+    out = {
         "id": e["id"],
         "name": e["name"],
         "status": e["status"],
@@ -66,22 +74,19 @@ async def _event_to_response_async(e: dict) -> dict:
         "priceDown": price_down,
         "createdAt": e["created_at"],
     }
-
-
-def _default_search(_query: str) -> str:
-    """Default search: no results (plug in real API via env or service later)."""
-    return ""
+    if e.get("status") == "rejected" and isinstance(e.get("config"), dict):
+        out["rejectReason"] = e["config"].get("reject_reason") or "Event not accepted for trading."
+    return out
 
 
 @router.post("")
 async def propose_event(body: ProposeEventBody):
-    """Propose an event: initial reasonability check (Google Search), then agent, index build, accept decision."""
+    """Propose an event: initial reasonability check (Gemini + Google Search), then agent, index build, accept decision."""
     if not body.name or not body.name.strip():
         raise HTTPException(status_code=400, detail="name required")
-    try:
-        window_minutes = period_to_minutes(body.period)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    window_minutes = body.windowMinutes if body.windowMinutes is not None and body.windowMinutes >= 1 else DEFAULT_WINDOW_MINUTES
+
+    logger.info("Propose event: name=%r, running reasonability check...", body.name.strip())
 
     try:
         from agent.propose_agent import initial_reasonability_check, select_tools_and_config, should_accept_event
@@ -92,51 +97,43 @@ async def propose_event(body: ProposeEventBody):
     reasonability = None
     if initial_reasonability_check is not None:
         try:
-            reasonability = initial_reasonability_check(
-                body.name.strip(),
-                body.sourceUrl,
-                body.description,
-                search_fn=_default_search,
-            )
-        except Exception:
-            reasonability = {"pass": True, "reason": "Check failed; proceeding."}
+            reasonability = initial_reasonability_check(body.name.strip(), body.sourceUrl, body.description)
+            logger.info("Reasonability check: pass=%s, reason=%s", reasonability.get("pass"), reasonability.get("reason", ""))
+        except Exception as exc:
+            logger.warning("Reasonability check failed: %s", exc, exc_info=True)
+            reasonability = {"pass": False, "reason": "Analysis failed; event rejected."}
+
     if reasonability is not None and not reasonability.get("pass", True):
-        event_id = str(uuid.uuid4())
+        logger.info("Event rejected after reasonability check: %s", reasonability.get("reason"))
+        # Do not persist rejected events; return synthetic response so frontend can show rejectReason
         now = datetime.now(timezone.utc)
         window_end = now + timedelta(minutes=window_minutes)
-        config = {
-            "channels": ["Hacker News", "Reddit"],
-            "tools": ["hn_frontpage", "reddit"],
-            "keywords": [body.name],
-            "exclusions": [],
-            "window_minutes": window_minutes,
-            "source_url": body.sourceUrl,
-            "description": body.description,
-            "reject_reason": reasonability.get("reason", "Event did not pass initial reasonability check."),
+        synthetic = {
+            "id": str(uuid.uuid4()),
+            "name": body.name.strip(),
+            "status": "rejected",
+            "window_start": now.isoformat(),
+            "window_end": window_end.isoformat(),
+            "index_start": 100.0,
+            "index_current": 100.0,
+            "resolution": None,
+            "config": {"reject_reason": reasonability.get("reason", "Event did not pass initial reasonability check.")},
+            "created_at": now.isoformat(),
         }
-        await db.create_event(
-            event_id=event_id,
-            name=body.name.strip(),
-            status="rejected",
-            window_start=now.isoformat(),
-            window_end=window_end.isoformat(),
-            index_start=100.0,
-            config=config,
-        )
-        await db.update_event_on_reject(event_id, config)
-        event = await db.get_event(event_id)
-        return await _event_to_response_async(event)
+        return await _event_to_response_async(synthetic)
 
     available_tools = [{"id": t["id"], "name": t["name"], "description": t["description"]} for t in get_available_tools()]
     try:
+        from agent.propose_agent import select_tools_and_config, should_accept_event
         config = select_tools_and_config(
-            body.name.strip(),
+            body.name,
             body.sourceUrl,
             body.description,
             available_tools,
             window_minutes,
         )
     except Exception:
+        from agent.propose_agent import should_accept_event
         config = {
             "channels": ["Hacker News", "Reddit"],
             "tools": ["hn_frontpage", "reddit"],
@@ -153,7 +150,7 @@ async def propose_event(body: ProposeEventBody):
     window_end_str = window_end.isoformat()
     await db.create_event(
         event_id=event_id,
-        name=body.name.strip(),
+        name=body.name,
         status="proposed",
         window_start=window_start_str,
         window_end=window_end_str,
@@ -162,7 +159,7 @@ async def propose_event(body: ProposeEventBody):
     )
     index_value, activity = await build_index(event_id, config)
     try:
-        decision = should_accept_event(body.name.strip(), index_value, activity)
+        decision = should_accept_event(body.name, index_value, activity)
         accepted = decision.get("accept", True)
     except Exception:
         accepted = True
@@ -176,14 +173,39 @@ async def propose_event(body: ProposeEventBody):
             config,
         )
     else:
+        config["reject_reason"] = decision.get("reason", "Event not accepted for trading.")
         await db.update_event_on_reject(event_id, config)
     event = await db.get_event(event_id)
     return await _event_to_response_async(event)
 
 
+@router.post("/suggest-window")
+async def suggest_window(body: SuggestWindowBody):
+    """Return AI-suggested window duration in minutes for the given event name/URL/description."""
+    if not body.name or not body.name.strip():
+        raise HTTPException(status_code=400, detail="name required")
+    available_tools = [{"id": t["id"], "name": t["name"], "description": t["description"]} for t in get_available_tools()]
+    try:
+        from agent.event_definition import event_definition
+        config = event_definition(
+            body.name.strip(),
+            0,
+            source_url=body.sourceUrl,
+            description=body.description,
+            available_tools=available_tools,
+            suggest_window_only=True,
+        )
+        suggested = config.get("suggested_window_minutes", 60)
+        return {"suggestedWindowMinutes": max(1, int(suggested))}
+    except Exception:
+        return {"suggestedWindowMinutes": 60}
+
+
 @router.get("")
 async def list_events(status: Optional[str] = None):
-    events = await db.list_events(status=status)
+    # Default to open so main page shows only tradeable events
+    effective_status = status if status is not None else "open"
+    events = await db.list_events(status=effective_status)
     out = []
     for e in events:
         out.append(await _event_to_response_async(e))

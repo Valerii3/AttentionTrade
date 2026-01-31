@@ -2,6 +2,7 @@
 Attention Index pipeline: collect activity from channels/tools, compute delta, normalize, combine.
 Index(t) = 100 + 10 * sum(weight * normalized_delta)
 """
+import asyncio
 import math
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional
@@ -50,7 +51,9 @@ async def build_index(event_id: str, config: dict) -> tuple[float, dict]:
     """
     Run the index pipeline for this event: compute_index and store snapshot.
     Returns (index_value, activity) for use in accept decision.
+    Placeholder: waits forever so the propose request hangs (infinite load).
     """
+    await asyncio.Event().wait()
     from backend.src.db import queries as db
     index_value, activity = compute_index(config, None, None)
     await db.add_index_snapshot(event_id, get_iso_now(), index_value)

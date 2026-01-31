@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { proposeEvent, type EventPeriod } from "../api-client/client";
+import { proposeEvent } from "../api-client/client";
 
 const inputStyle = {
   width: "100%",
@@ -11,22 +11,15 @@ const inputStyle = {
   borderRadius: "4px",
 };
 
-const PERIODS: { value: EventPeriod; label: string }[] = [
-  { value: "1h", label: "1 hour" },
-  { value: "8h", label: "8 hours" },
-  { value: "24h", label: "24 hours" },
-  { value: "1w", label: "1 week" },
-];
-
 export default function CreateEvent() {
   const [name, setName] = useState("");
   const [sourceUrl, setSourceUrl] = useState("");
   const [description, setDescription] = useState("");
-  const [period, setPeriod] = useState<EventPeriod>("24h");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [successModal, setSuccessModal] = useState(false);
   const [acceptedEventId, setAcceptedEventId] = useState<string | null>(null);
+  const [rejectionModal, setRejectionModal] = useState(false);
   const [rejectedMessage, setRejectedMessage] = useState<string | null>(null);
 
   const navigate = useNavigate();
@@ -41,7 +34,7 @@ export default function CreateEvent() {
     }
     setLoading(true);
     try {
-      const event = await proposeEvent(name.trim(), period, {
+      const event = await proposeEvent(name.trim(), {
         sourceUrl: sourceUrl.trim() || undefined,
         description: description.trim() || undefined,
       });
@@ -49,9 +42,11 @@ export default function CreateEvent() {
         setAcceptedEventId(event.id);
         setSuccessModal(true);
       } else if (event.status === "rejected") {
-        setRejectedMessage("Event not accepted for trading.");
+        setRejectedMessage(event.rejectReason ?? "This event is not accepted for trading.");
+        setRejectionModal(true);
       } else {
-        setRejectedMessage("Event was not accepted. You can view it in the list.");
+        setRejectedMessage(event.rejectReason ?? "This event is not accepted for trading.");
+        setRejectionModal(true);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to propose event");
@@ -66,6 +61,11 @@ export default function CreateEvent() {
       navigate(`/events/${acceptedEventId}`);
       setAcceptedEventId(null);
     }
+  }
+
+  function closeRejectionModal() {
+    setRejectionModal(false);
+    setRejectedMessage(null);
   }
 
   return (
@@ -97,6 +97,50 @@ export default function CreateEvent() {
             <button
               type="button"
               onClick={closeSuccessModal}
+              style={{
+                padding: "0.5rem 1rem",
+                background: "#7c3aed",
+                color: "#fff",
+                border: "none",
+                borderRadius: "4px",
+                cursor: "pointer",
+              }}
+            >
+              OK
+            </button>
+          </div>
+        </div>
+      )}
+      {rejectionModal && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.6)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 10,
+          }}
+          onClick={closeRejectionModal}
+        >
+          <div
+            style={{
+              background: "#27272a",
+              padding: "1.5rem",
+              borderRadius: "8px",
+              border: "1px solid #3f3f46",
+              maxWidth: "320px",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ margin: "0 0 0.75rem 0", fontSize: "1.1rem" }}>Event not tradable</h3>
+            <p style={{ margin: "0 0 1rem 0", fontSize: "1rem", color: "#e4e4e7" }}>
+              {rejectedMessage ?? "This event is not accepted for trading."}
+            </p>
+            <button
+              type="button"
+              onClick={closeRejectionModal}
               style={{
                 padding: "0.5rem 1rem",
                 background: "#7c3aed",
@@ -143,25 +187,8 @@ export default function CreateEvent() {
             style={inputStyle}
           />
         </div>
-        <div style={{ marginBottom: "1rem" }}>
-          <label style={{ display: "block", marginBottom: "0.25rem" }}>Period</label>
-          <select
-            value={period}
-            onChange={(e) => setPeriod(e.target.value as EventPeriod)}
-            style={inputStyle}
-          >
-            {PERIODS.map((p) => (
-              <option key={p.value} value={p.value}>
-                {p.label}
-              </option>
-            ))}
-          </select>
-        </div>
         {error && (
           <p style={{ color: "#f87171", marginBottom: "1rem" }}>{error}</p>
-        )}
-        {rejectedMessage && !loading && (
-          <p style={{ color: "#fbbf24", marginBottom: "1rem" }}>{rejectedMessage}</p>
         )}
         <button
           type="submit"

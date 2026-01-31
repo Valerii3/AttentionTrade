@@ -1,10 +1,13 @@
 """
-Gemini-based agent for propose flow: initial reasonability check (Google Search), tool selection, accept decision.
+Gemini-based agent for propose flow: initial reasonability check (Google Search via generate_content + tools), tool selection, accept decision.
 Uses GEMINI_API_KEY when set; otherwise falls back to event_definition + always accept.
 """
 import json
+import logging
 import os
-from typing import Any, Callable, Optional
+from typing import Any, Optional
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_TOOL_IDS = ["hn_frontpage", "reddit"]
 
@@ -13,11 +16,10 @@ def initial_reasonability_check(
     name: str,
     source_url: Optional[str],
     description: Optional[str],
-    search_fn: Callable[[str], str],
 ) -> dict[str, Any]:
     """
-    Check if the event is reasonable in general using a Google Search–style tool.
-    Gemini suggests a search query; we run search_fn(query); Gemini decides if we found something similar.
+    Check if the event is reasonable using Gemini generate_content with Google Search tool.
+    One call: model uses tools=[Tool(google_search=GoogleSearch())] to verify, returns pass/reason JSON.
     Returns {"pass": bool, "reason": str}. If not pass, reject the event with reason.
     """
     api_key = os.environ.get("GEMINI_API_KEY")
@@ -37,55 +39,61 @@ def initial_reasonability_check(
         user_parts.append(f"Description: {description}")
     user_content = " ".join(user_parts)
 
+    prompt = (
+        "You check whether an event is suitable for an attention-trading market (tradable on attention). "
+        "Use Google Search to verify the event is real and discussed on the web. "
+        "If you find no or insufficient information, the event is not tradable. "
+        "Reply with ONLY a JSON object: {\"pass\": true or false, \"reason\": \"short explanation\"}. "
+        "If pass is false, reason should be user-friendly (e.g. \"We couldn't find enough information about this event on the web, so it's not tradable yet.\"). "
+        "No markdown, no code fences.\n\n"
+        + user_content
+    )
+
     try:
-        query_prompt = (
-            "You are checking if an event is a real, reasonable topic for an attention-tracking market. "
-            "Output a single Google search query (one line, no quotes) to verify this event exists or is discussed. "
-            "Output ONLY the search query, nothing else.\n\n" + user_content
-        )
+        grounding_tool = genai.types.Tool(google_search=genai.types.GoogleSearch())
+        config = genai.types.GenerateContentConfig(tools=[grounding_tool])
         response = client.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=query_prompt,
+            model="gemini-2.5-flash-lite",
+            contents=prompt,
+            config=config,
         )
-        if hasattr(response, "text"):
-            query = response.text.strip().strip('"')
+        # Log full Gemini response
+        try:
+            text = getattr(response, "text", None) or (
+                response.candidates[0].content.parts[0].text
+                if response.candidates and response.candidates[0].content.parts
+                else None
+            )
+            if text:
+                logger.info("Gemini reasonability response: %s", text[:2000] + ("..." if len(text) > 2000 else ""))
+            else:
+                logger.info("Gemini reasonability response: (no text)")
+        except Exception as e:
+            logger.warning("Could not log Gemini response: %s", e)
+
+        if hasattr(response, "text") and response.text:
+            text = (response.text or "").strip()
         elif response.candidates and response.candidates[0].content.parts:
-            query = response.candidates[0].content.parts[0].text.strip().strip('"')
+            text = (response.candidates[0].content.parts[0].text or "").strip()
         else:
-            return {"pass": True, "reason": "Could not get search query; proceeding."}
-        if not query:
-            return {"pass": True, "reason": "Empty query; proceeding."}
+            logger.warning("No text in Gemini response; rejecting.")
+            return {"pass": False, "reason": "No response from verification; event rejected."}
 
-        search_results = search_fn(query)
-
-        judge_prompt = (
-            f"Event: {user_content}\n\n"
-            "Google search was run for this event. Search results:\n"
-            f"{search_results if search_results else '(No results found)'}\n\n"
-            "Is this event reasonable and did we find something similar or relevant? "
-            "If there are no results or nothing relevant, say no. "
-            "Reply with ONLY a JSON object: {\"pass\": true or false, \"reason\": \"short explanation\"}. No markdown."
-        )
-        response2 = client.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=judge_prompt,
-        )
-        if hasattr(response2, "text"):
-            text = response2.text
-        elif response2.candidates and response2.candidates[0].content.parts:
-            text = response2.candidates[0].content.parts[0].text
-        else:
-            return {"pass": True, "reason": "Could not parse judge response; proceeding."}
-
-        text = text.strip()
         if text.startswith("```"):
             text = text.split("\n", 1)[1] if "\n" in text else text[3:]
         if text.endswith("```"):
             text = text.rsplit("```", 1)[0].strip()
         out = json.loads(text)
-        return {"pass": bool(out.get("pass", False)), "reason": out.get("reason", "")}
-    except Exception:
-        return {"pass": True, "reason": "Error during initial check; proceeding."}
+        passed = bool(out.get("pass", False))
+        reason = out.get("reason", "")
+        logger.info("Reasonability: pass=%s, reason=%s", passed, reason)
+        return {"pass": passed, "reason": reason}
+    except json.JSONDecodeError as e:
+        logger.warning("Gemini response not valid JSON: %s", e)
+        return {"pass": False, "reason": "Verification response invalid; event rejected."}
+    except Exception as exc:
+        logger.warning("Error during initial check: %s", exc, exc_info=True)
+        return {"pass": False, "reason": "Error during initial check; event rejected."}
 
 
 def select_tools_and_config(
@@ -164,15 +172,16 @@ def _select_tools_gemini(
 
     full_prompt = (
         "You are a config generator for an attention-tracking system. Given an event name and optional URL/description, "
-        "output ONLY a single JSON object with keys: tools (array of tool ids to use), keywords (array of search terms), exclusions (array of terms to exclude). "
-        "Available tools: " + tools_desc + ". "
-        "Choose which tools are relevant (e.g. for a Reddit URL use reddit; for tech news use hn_frontpage). No markdown, no explanation.\n\n"
+        "output ONLY a single JSON object with keys: tools (array of tool ids), keywords (array of strings), exclusions (array of strings). "
+        "Available tools: Reddit (id: reddit), Hacker News front page (id: hn_frontpage). "
+        "Choose which tools to use: e.g. use reddit when the event or source is Reddit-related; use hn_frontpage for tech/product news; use both if the event could appear on both. "
+        "No markdown, no explanation.\n\n"
         + user_content
     )
 
     try:
         response = client.models.generate_content(
-            model="gemini-2.0-flash",
+            model="gemini-2.5-flash-lite",
             contents=full_prompt,
         )
         # Handle both config and no config; some SDK versions use different signatures
@@ -230,7 +239,7 @@ def should_accept_event(
     )
     try:
         response = client.models.generate_content(
-            model="gemini-2.0-flash",
+            model="gemini-2.5-flash-lite",
             contents=prompt,
         )
         if hasattr(response, "text"):

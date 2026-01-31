@@ -17,7 +17,7 @@ def test_initial_reasonability_check_no_api_key_passes():
     env_orig = os.environ.get("GEMINI_API_KEY")
     try:
         os.environ.pop("GEMINI_API_KEY", None)
-        result = initial_reasonability_check("anything", None, None, lambda q: "")
+        result = initial_reasonability_check("anything", None, None)
         assert result["pass"] is True
         assert "reason" in result
     finally:
@@ -26,16 +26,16 @@ def test_initial_reasonability_check_no_api_key_passes():
 
 
 def test_initial_reasonability_check_mess_with_empty_search_rejects():
-    """When input is nonsense and search returns no results, Gemini rejects (mock)."""
-    mock_response_query = MagicMock()
-    mock_response_query.text = "asdfkj random gibberish xyz"
-    mock_response_judge = MagicMock()
-    mock_response_judge.text = json.dumps({"pass": False, "reason": "No relevant results; input appears to be nonsense."})
+    """When input is nonsense, Gemini (with Google Search) rejects (mock)."""
+    mock_response = MagicMock()
+    mock_response.text = json.dumps({"pass": False, "reason": "No relevant results; input appears to be nonsense."})
+    mock_response.candidates = []
 
     mock_client = MagicMock()
-    mock_client.models.generate_content.side_effect = [mock_response_query, mock_response_judge]
+    mock_client.models.generate_content.return_value = mock_response
     mock_genai = MagicMock()
     mock_genai.Client.return_value = mock_client
+    mock_genai.types = MagicMock()
     mock_google = MagicMock()
     mock_google.genai = mock_genai
 
@@ -43,13 +43,7 @@ def test_initial_reasonability_check_mess_with_empty_search_rejects():
     try:
         os.environ["GEMINI_API_KEY"] = "test-key"
         with patch.dict(sys.modules, {"google": mock_google, "google.genai": mock_genai}):
-            search_results: list[str] = []
-
-            def capture_search(q: str) -> str:
-                search_results.append(q)
-                return ""
-
-            result = initial_reasonability_check("some mess", None, None, capture_search)
+            result = initial_reasonability_check("some mess", None, None)
     finally:
         if env_orig is None:
             os.environ.pop("GEMINI_API_KEY", None)
@@ -62,16 +56,16 @@ def test_initial_reasonability_check_mess_with_empty_search_rejects():
 
 
 def test_initial_reasonability_check_with_similar_results_passes():
-    """When search returns relevant results, Gemini can pass (mock)."""
-    mock_response_query = MagicMock()
-    mock_response_query.text = "Cursor Hackathon 2024"
-    mock_response_judge = MagicMock()
-    mock_response_judge.text = json.dumps({"pass": True, "reason": "Found relevant discussion of Cursor Hackathon."})
+    """When Gemini (with Google Search) finds relevant results, check passes (mock)."""
+    mock_response = MagicMock()
+    mock_response.text = json.dumps({"pass": True, "reason": "Found relevant discussion of Cursor Hackathon."})
+    mock_response.candidates = []
 
     mock_client = MagicMock()
-    mock_client.models.generate_content.side_effect = [mock_response_query, mock_response_judge]
+    mock_client.models.generate_content.return_value = mock_response
     mock_genai = MagicMock()
     mock_genai.Client.return_value = mock_client
+    mock_genai.types = MagicMock()
     mock_google = MagicMock()
     mock_google.genai = mock_genai
 
@@ -79,12 +73,7 @@ def test_initial_reasonability_check_with_similar_results_passes():
     try:
         os.environ["GEMINI_API_KEY"] = "test-key"
         with patch.dict(sys.modules, {"google": mock_google, "google.genai": mock_genai}):
-            result = initial_reasonability_check(
-                "Cursor Hackathon Dec 24",
-                None,
-                None,
-                lambda q: "Cursor Hackathon 2024 announced...",
-            )
+            result = initial_reasonability_check("Cursor Hackathon Dec 24", None, None)
     finally:
         if env_orig is None:
             os.environ.pop("GEMINI_API_KEY", None)

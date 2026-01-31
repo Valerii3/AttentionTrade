@@ -15,6 +15,8 @@ export interface Event {
   priceUp: number;
   priceDown: number;
   createdAt: string;
+  /** Present when status is "rejected". */
+  rejectReason?: string;
 }
 
 export interface IndexHistoryPoint {
@@ -22,28 +24,39 @@ export interface IndexHistoryPoint {
   index: number;
 }
 
-export type EventPeriod = "1h" | "8h" | "24h" | "1w";
-
-export interface ProposeEventParams {
-  name: string;
-  period: EventPeriod;
-  sourceUrl?: string;
-  description?: string;
-}
-
-/** Propose an event: backend runs initial check (Google Search), agent, index build, accept decision. */
+/** Propose an event: backend runs reasonability check (Gemini + Google Search), agent, index build, accept decision. */
 export async function proposeEvent(
   name: string,
-  period: EventPeriod,
   options?: { sourceUrl?: string; description?: string }
 ): Promise<Event> {
-  const body: Record<string, unknown> = { name, period };
+  const body: Record<string, unknown> = { name };
   if (options?.sourceUrl) body.sourceUrl = options.sourceUrl;
   if (options?.description) body.description = options.description;
   const res = await fetch(`${BASE}/events`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    throw new Error(d.detail || res.statusText);
+  }
+  return res.json();
+}
+
+export async function suggestWindowMinutes(params: {
+  name: string;
+  sourceUrl?: string;
+  description?: string;
+}): Promise<{ suggestedWindowMinutes: number }> {
+  const res = await fetch(`${BASE}/events/suggest-window`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: params.name,
+      sourceUrl: params.sourceUrl,
+      description: params.description,
+    }),
   });
   if (!res.ok) {
     const d = await res.json().catch(() => ({}));
