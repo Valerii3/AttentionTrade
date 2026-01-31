@@ -189,3 +189,37 @@ async def set_event_status(event_id: str, status: str) -> None:
         await conn.commit()
     finally:
         await conn.close()
+
+
+async def update_event_on_accept(
+    event_id: str,
+    window_start: str,
+    window_end: str,
+    index_start: float,
+    index_current: float,
+    config: dict,
+) -> None:
+    """Set event to open and set window/index/config (after propose flow accepts)."""
+    conn = await get_db()
+    try:
+        await conn.execute(
+            """UPDATE events SET status = 'open', window_start = ?, window_end = ?,
+               index_start = ?, index_current = ?, config = ? WHERE id = ?""",
+            (window_start, window_end, index_start, index_current, json.dumps(config), event_id),
+        )
+        await conn.commit()
+    finally:
+        await conn.close()
+
+
+async def update_event_on_reject(event_id: str, config: dict) -> None:
+    """Set event to rejected and persist config."""
+    conn = await get_db()
+    try:
+        await conn.execute(
+            "UPDATE events SET status = 'rejected', config = ? WHERE id = ?",
+            (json.dumps(config), event_id),
+        )
+        await conn.commit()
+    finally:
+        await conn.close()

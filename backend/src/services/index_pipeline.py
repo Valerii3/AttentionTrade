@@ -1,11 +1,10 @@
 """
-Attention Index pipeline: collect activity from channels, compute delta, normalize, combine.
+Attention Index pipeline: collect activity from channels/tools, compute delta, normalize, combine.
 Index(t) = 100 + 10 * sum(weight * normalized_delta)
 """
 import math
-import os
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import feedparser
 
@@ -39,10 +38,41 @@ def fetch_reddit_activity(keywords: list[str], exclusions: list[str]) -> float:
     return 0.0
 
 
+# Map tool id -> (channel_display_name, fetcher_fn) for agent-selected tools
+def _get_tool_fetchers() -> dict[str, tuple[str, Callable[[list[str], list[str]], float]]]:
+    return {
+        "hn_frontpage": ("Hacker News", fetch_hn_activity),
+        "reddit": ("Reddit", fetch_reddit_activity),
+    }
+
+
+async def build_index(event_id: str, config: dict) -> tuple[float, dict]:
+    """
+    Run the index pipeline for this event: compute_index and store snapshot.
+    Returns (index_value, activity) for use in accept decision.
+    """
+    from backend.src.db import queries as db
+    index_value, activity = compute_index(config, None, None)
+    await db.add_index_snapshot(event_id, get_iso_now(), index_value)
+    await db.update_event_index(event_id, index_value)
+    return index_value, activity
+
+
 def log_scale(x: float) -> float:
     if x <= 0:
         return 0.0
     return math.log1p(x)
+
+
+def _get_fetchers_for_config(config: dict) -> list[tuple[str, Callable[[list[str], list[str]], float]]]:
+    """Return list of (channel_name, fetcher_fn) from config: prefer tools, else channels."""
+    tools = config.get("tools")
+    fetchers_map = _get_tool_fetchers()
+    if tools:
+        return [fetchers_map[tid] for tid in tools if tid in fetchers_map]
+    channels = config.get("channels", ["Hacker News", "Reddit"])
+    name_to_fetcher = {"Hacker News": fetch_hn_activity, "Reddit": fetch_reddit_activity}
+    return [(ch, name_to_fetcher[ch]) for ch in channels if ch in name_to_fetcher]
 
 
 def compute_index(
@@ -53,16 +83,15 @@ def compute_index(
     """
     Compute index from current activity and previous. Returns (index_value, current_activity_for_next_round).
     Baseline should set index_start = 100; subsequent calls use deltas.
+    Prefers config.tools (agent-selected); falls back to config.channels.
     """
     keywords = config.get("keywords", [])
     exclusions = config.get("exclusions", [])
-    channels = config.get("channels", ["Hacker News", "Reddit"])
+    fetchers = _get_fetchers_for_config(config)
 
     activity = {}
-    if "Hacker News" in channels:
-        activity["Hacker News"] = fetch_hn_activity(keywords, exclusions)
-    if "Reddit" in channels:
-        activity["Reddit"] = fetch_reddit_activity(keywords, exclusions)
+    for channel_name, fetcher_fn in fetchers:
+        activity[channel_name] = fetcher_fn(keywords, exclusions)
 
     if previous_activity is None:
         # First run: treat as baseline, index = 100

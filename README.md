@@ -42,15 +42,20 @@ Open `http://localhost:5173`. The dev server proxies `/api` to `http://localhost
 
 - **Backend / Agent**
   - `ATTENTION_DB_PATH` — SQLite database file path (default: `attention.db` in project root).
+  - `GEMINI_API_KEY` — Optional. If set, the propose flow uses Gemini for tool selection and accept decision; otherwise it falls back to defaults and always accepts.
   - `OPENAI_API_KEY` — Optional. If set, the agent uses the LLM for event definition and resolution explanations; otherwise it uses simple defaults.
 
 ## API
 
 See [docs/api.md](docs/api.md) for endpoints and request/response shapes.
 
+## Scripts
+
+- **`scripts/play_gemini.py`** — Standalone script to play with the Gemini API. Run from project root: `python scripts/play_gemini.py` (set `GEMINI_API_KEY` in env or pass as first arg).
+
 ## Features
 
-- Create events with name and time window; AI defines channels/keywords/exclusions (or defaults).
+- Propose events with name, optional URL/description, and time window; Gemini (or fallback) selects tools and builds the index; AI accepts or rejects for trading. When accepted, event is open for trading.
 - Index updates every 1 minute from Hacker News (and placeholder Reddit); index = 100 + 10 × normalized delta.
 - Trade “Attention ↑” or “Attention ↓” with demo credits; belief-based pricing (sigmoid).
 - When the window ends, event resolves to up/down and an optional AI explanation is stored.

@@ -7,14 +7,23 @@ from pydantic import BaseModel
 
 from backend.src.db import queries as db
 from backend.src.services.trading import prices_from_position
-from backend.src.services.index_pipeline import compute_index, get_iso_now
+from backend.src.services.index_pipeline import get_iso_now, build_index
+from backend.src.services.tools import get_available_tools
 
 router = APIRouter(prefix="/events", tags=["events"])
 
 
-class CreateEventBody(BaseModel):
+class ProposeEventBody(BaseModel):
     name: str
     windowMinutes: int
+    sourceUrl: Optional[str] = None
+    description: Optional[str] = None
+
+
+class SuggestWindowBody(BaseModel):
+    name: str
+    sourceUrl: Optional[str] = None
+    description: Optional[str] = None
 
 
 class TradeBody(BaseModel):
@@ -63,18 +72,30 @@ async def _event_to_response_async(e: dict) -> dict:
 
 
 @router.post("")
-async def create_event(body: CreateEventBody):
+async def propose_event(body: ProposeEventBody):
+    """Propose an event: agent selects tools, builds index, then AI accepts or rejects."""
     if not body.name or body.windowMinutes < 1:
         raise HTTPException(status_code=400, detail="name and windowMinutes required")
+    available_tools = [{"id": t["id"], "name": t["name"], "description": t["description"]} for t in get_available_tools()]
     try:
-        from agent.event_definition import event_definition
-        config = event_definition(body.name, body.windowMinutes)
+        from agent.propose_agent import select_tools_and_config, should_accept_event
+        config = select_tools_and_config(
+            body.name,
+            body.sourceUrl,
+            body.description,
+            available_tools,
+            body.windowMinutes,
+        )
     except Exception:
+        from agent.propose_agent import should_accept_event
         config = {
             "channels": ["Hacker News", "Reddit"],
+            "tools": ["hn_frontpage", "reddit"],
             "keywords": [body.name],
             "exclusions": [],
             "window_minutes": body.windowMinutes,
+            "source_url": body.sourceUrl,
+            "description": body.description,
         }
     event_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc)
@@ -84,16 +105,53 @@ async def create_event(body: CreateEventBody):
     await db.create_event(
         event_id=event_id,
         name=body.name,
-        status="open",
+        status="proposed",
         window_start=window_start_str,
         window_end=window_end_str,
         index_start=100.0,
         config=config,
     )
-    # Insert initial snapshot
-    await db.add_index_snapshot(event_id, get_iso_now(), 100.0)
+    index_value, activity = await build_index(event_id, config)
+    try:
+        decision = should_accept_event(body.name, index_value, activity)
+        accepted = decision.get("accept", True)
+    except Exception:
+        accepted = True
+    if accepted:
+        await db.update_event_on_accept(
+            event_id,
+            window_start_str,
+            window_end_str,
+            100.0,
+            index_value,
+            config,
+        )
+    else:
+        await db.update_event_on_reject(event_id, config)
     event = await db.get_event(event_id)
     return await _event_to_response_async(event)
+
+
+@router.post("/suggest-window")
+async def suggest_window(body: SuggestWindowBody):
+    """Return AI-suggested window duration in minutes for the given event name/URL/description."""
+    if not body.name or not body.name.strip():
+        raise HTTPException(status_code=400, detail="name required")
+    available_tools = [{"id": t["id"], "name": t["name"], "description": t["description"]} for t in get_available_tools()]
+    try:
+        from agent.event_definition import event_definition
+        config = event_definition(
+            body.name.strip(),
+            0,
+            source_url=body.sourceUrl,
+            description=body.description,
+            available_tools=available_tools,
+            suggest_window_only=True,
+        )
+        suggested = config.get("suggested_window_minutes", 60)
+        return {"suggestedWindowMinutes": max(1, int(suggested))}
+    except Exception:
+        return {"suggestedWindowMinutes": 60}
 
 
 @router.get("")

@@ -3,7 +3,7 @@
 CREATE TABLE IF NOT EXISTS events (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'draft',  -- draft | open | resolved
+  status TEXT NOT NULL DEFAULT 'draft',  -- draft | proposed | open | rejected | resolved
   window_start TEXT NOT NULL,
   window_end TEXT NOT NULL,
   index_start REAL NOT NULL DEFAULT 100,
