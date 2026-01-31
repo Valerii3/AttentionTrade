@@ -1,6 +1,10 @@
 """
 Attention Index pipeline: collect activity from channels/tools, compute delta, normalize, combine.
 Index(t) = 100 + 10 * sum(weight * normalized_delta)
+
+The Attention Index is the oracle: it is defined once per event (by config and channel data only),
+is public and fixed, and is used only for resolution, explanation, and auditability.
+Trading does not affect the index. For demo events, the index may be synthetic (see demo_index).
 """
 import logging
 import math
@@ -141,7 +145,7 @@ def compute_index(
 ) -> tuple:
     """
     Compute index from current activity and previous. Returns (index_value, current_activity_for_next_round).
-    Baseline should set index_start = 100; subsequent calls use deltas.
+    Uses only config and channel fetchers; no trade/position input. Baseline: index_start = 100; subsequent calls use deltas.
     Prefers config.tools (agent-selected); falls back to config.channels.
     """
     keywords = config.get("keywords", [])

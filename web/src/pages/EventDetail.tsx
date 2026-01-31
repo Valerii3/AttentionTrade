@@ -3,6 +3,7 @@ import { useParams, Link } from "react-router-dom";
 import {
   getEvent,
   getIndexHistory,
+  listEvents,
   trade,
   getExplanation,
   type Event,
@@ -18,6 +19,7 @@ import {
 } from "recharts";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { formatCanonicalQuestion } from "@/lib/utils";
 import { useProfile } from "@/contexts/profile-context";
 
 const POLL_MS = 30000;
@@ -26,6 +28,7 @@ export default function EventDetail() {
   const { id } = useParams<{ id: string }>();
   const [event, setEvent] = useState<Event | null>(null);
   const [history, setHistory] = useState<IndexHistoryPoint[]>([]);
+  const [pastWindows, setPastWindows] = useState<Event[]>([]);
   const [explanation, setExplanation] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [tradeSide, setTradeSide] = useState<"up" | "down">("up");
@@ -46,6 +49,20 @@ export default function EventDetail() {
         const ex = await getExplanation(id);
         setExplanation(ex.explanation);
       }
+      // Past windows for this topic (resolved, same name; exclude current id)
+      const { events: resolvedSameTopic } = await listEvents({
+        status: "resolved",
+        name: e.name,
+      });
+      setPastWindows(
+        resolvedSameTopic
+          .filter((ev) => ev.id !== id)
+          .sort(
+            (a, b) =>
+              new Date(b.windowEnd).getTime() - new Date(a.windowEnd).getTime()
+          )
+          .slice(0, 10)
+      );
     } catch {
       setEvent(null);
     } finally {
@@ -108,22 +125,33 @@ export default function EventDetail() {
 
       <div className="bg-card rounded-lg border border-border p-6 relative">
         <h1 className="text-xl font-semibold text-foreground pr-20">
-          {event.name}
+          {event.headline ?? formatCanonicalQuestion(event.name, event.marketType ?? "1h")}
         </h1>
+        {event.subline && (
+          <p className="text-sm text-muted-foreground mt-0.5">{event.subline}</p>
+        )}
+        {event.demo && (
+          <p className="text-xs text-muted-foreground mt-1">
+            Demo: accelerated attention dynamics.
+          </p>
+        )}
         <div className="text-sm text-muted-foreground mt-2">
           Status: <strong className="text-foreground">{event.status}</strong> ·
           Index: {event.indexCurrent.toFixed(1)} (start: {event.indexStart})
           {event.status === "open" && (
             <>
               {" "}
-              · Up {(event.priceUp * 100).toFixed(0)}% / Down{" "}
+              · {event.labelUp ?? "Heating up"} {(event.priceUp * 100).toFixed(0)}% / {event.labelDown ?? "Cooling down"}{" "}
               {(event.priceDown * 100).toFixed(0)}%
             </>
+          )}
+          {event.status === "open" && event.volume != null && (
+            <> · Vol. {event.volume}</>
           )}
           {event.status === "resolved" && event.resolution && (
             <>
               {" "}
-              · Resolved: Attention {event.resolution === "up" ? "↑" : "↓"}
+              · Resolved: {event.resolution === "up" ? (event.labelUp ?? "Heating up") : (event.labelDown ?? "Cooling down")}
             </>
           )}
         </div>
@@ -175,7 +203,7 @@ export default function EventDetail() {
                   onChange={() => setTradeSide("up")}
                   className="accent-primary"
                 />
-                <span className="text-sm">Attention ↑</span>
+                <span className="text-sm">{event.labelUp ?? "Heating up"}</span>
               </label>
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
@@ -185,7 +213,7 @@ export default function EventDetail() {
                   onChange={() => setTradeSide("down")}
                   className="accent-primary"
                 />
-                <span className="text-sm">Attention ↓</span>
+                <span className="text-sm">{event.labelDown ?? "Cooling down"}</span>
               </label>
               <Input
                 type="number"
@@ -212,6 +240,28 @@ export default function EventDetail() {
               Why attention moved
             </h3>
             <p className="text-sm text-muted-foreground">{explanation}</p>
+          </div>
+        )}
+
+        {pastWindows.length > 0 && (
+          <div className="mt-6 p-4 rounded-lg border border-border bg-muted/30">
+            <h3 className="text-sm font-medium text-foreground mb-2">
+              Past windows (recurring)
+            </h3>
+            <p className="text-sm text-muted-foreground mb-2">
+              Resolution history for this topic:
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {pastWindows.map((w) => (
+                <span
+                  key={w.id}
+                  className="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-muted text-foreground"
+                  title={new Date(w.windowEnd).toLocaleString()}
+                >
+                  {w.resolution === "up" ? "↑" : "↓"}
+                </span>
+              ))}
+            </div>
           </div>
         )}
       </div>

@@ -6,6 +6,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from backend.src.constants import market_type_to_minutes
 from backend.src.db import queries as db
 from backend.src.services.trading import prices_from_position
 from backend.src.services.index_pipeline import get_iso_now, build_index
@@ -14,12 +15,15 @@ from backend.src.services.tools import get_available_tools
 router = APIRouter(prefix="/events", tags=["events"])
 logger = logging.getLogger(__name__)
 
+# Canonical default: 1h market
+DEFAULT_MARKET_TYPE = "1h"
 
-DEFAULT_WINDOW_MINUTES = 1440  # 24h
 
 class ProposeEventBody(BaseModel):
     name: str
-    windowMinutes: Optional[int] = None  # optional; default 24h
+    marketType: Optional[str] = None  # "1h" | "24h"; default 1h
+    windowMinutes: Optional[int] = None  # ignored for normal flow; used only for demo override
+    demo: Optional[bool] = False  # if True: 2-min window, synthetic index, labeled demo
     sourceUrl: Optional[str] = None
     description: Optional[str] = None
 
@@ -62,6 +66,8 @@ async def _event_to_response_async(e: dict) -> dict:
     # Synthetic rejected events are not in DB; get_position returns 0,0 for unknown id
     net_up, net_down = await db.get_position(e["id"])
     price_up, price_down = prices_from_position(net_up, net_down)
+    volume = await db.get_volume(e["id"])
+    config = e.get("config") or {}
     out = {
         "id": e["id"],
         "name": e["name"],
@@ -74,9 +80,16 @@ async def _event_to_response_async(e: dict) -> dict:
         "priceUp": price_up,
         "priceDown": price_down,
         "createdAt": e["created_at"],
+        "marketType": config.get("market_type", DEFAULT_MARKET_TYPE),
+        "demo": bool(config.get("demo")),
+        "volume": round(volume, 2),
+        "headline": config.get("headline"),
+        "subline": config.get("subline"),
+        "labelUp": config.get("label_up"),
+        "labelDown": config.get("label_down"),
     }
-    if e.get("status") == "rejected" and isinstance(e.get("config"), dict):
-        out["rejectReason"] = e["config"].get("reject_reason") or "Event not accepted for trading."
+    if e.get("status") == "rejected" and isinstance(config, dict):
+        out["rejectReason"] = config.get("reject_reason") or "Event not accepted for trading."
     return out
 
 
@@ -85,13 +98,22 @@ async def propose_event(body: ProposeEventBody):
     """Propose an event: initial reasonability check (Gemini + Google Search), then agent, index build, accept decision."""
     if not body.name or not body.name.strip():
         raise HTTPException(status_code=400, detail="name required")
-    window_minutes = body.windowMinutes if body.windowMinutes is not None and body.windowMinutes >= 1 else DEFAULT_WINDOW_MINUTES
+    market_type = (body.marketType or DEFAULT_MARKET_TYPE).strip().lower()
+    if market_type not in ("1h", "24h"):
+        market_type = DEFAULT_MARKET_TYPE
+    window_minutes = market_type_to_minutes(market_type)
+    # Demo override: 2-min window, synthetic index
+    if body.demo:
+        window_minutes = 2
+    elif body.windowMinutes is not None and body.windowMinutes >= 1:
+        window_minutes = body.windowMinutes
 
-    logger.info("Propose event: name=%r, running reasonability check...", body.name.strip())
+    logger.info("Propose event: name=%r, marketType=%s, demo=%s, running reasonability check...", body.name.strip(), market_type, bool(body.demo))
 
     try:
         from agent.propose_agent import (
             initial_reasonability_check,
+            reject_reason_if_outcome_style,
             select_tools_and_config,
             should_accept_event,
             has_traction,
@@ -105,9 +127,33 @@ async def propose_event(body: ProposeEventBody):
             NO_ATTENTION_REASON,
         )
         initial_reasonability_check = None
+        reject_reason_if_outcome_style = None
+
+    # Demo: skip outcome-style and reasonability checks so any topic works
+    if not body.demo:
+        # Reject outcome-style markets (resolvable by one number) in favor of attention-native framing
+        if reject_reason_if_outcome_style is not None:
+            outcome_reason = reject_reason_if_outcome_style(body.name.strip(), body.description)
+            if outcome_reason:
+                logger.info("Event rejected (outcome-style): %s", outcome_reason)
+                now = datetime.now(timezone.utc)
+                window_end = now + timedelta(minutes=window_minutes)
+                synthetic = {
+                    "id": str(uuid.uuid4()),
+                    "name": body.name.strip(),
+                    "status": "rejected",
+                    "window_start": now.isoformat(),
+                    "window_end": window_end.isoformat(),
+                    "index_start": 100.0,
+                    "index_current": 100.0,
+                    "resolution": None,
+                    "config": {"reject_reason": outcome_reason},
+                    "created_at": now.isoformat(),
+                }
+                return await _event_to_response_async(synthetic)
 
     reasonability = None
-    if initial_reasonability_check is not None:
+    if not body.demo and initial_reasonability_check is not None:
         try:
             reasonability = initial_reasonability_check(body.name.strip(), body.sourceUrl, body.description)
             logger.info("Reasonability check: pass=%s, reason=%s", reasonability.get("pass"), reasonability.get("reason", ""))
@@ -115,7 +161,7 @@ async def propose_event(body: ProposeEventBody):
             logger.warning("Reasonability check failed: %s", exc, exc_info=True)
             reasonability = {"pass": False, "reason": "Analysis failed; event rejected."}
 
-    if reasonability is not None and not reasonability.get("pass", True):
+    if not body.demo and reasonability is not None and not reasonability.get("pass", True):
         logger.info("Event rejected after reasonability check: %s", reasonability.get("reason"))
         # Do not persist rejected events; return synthetic response so frontend can show rejectReason
         now = datetime.now(timezone.utc)
@@ -134,27 +180,63 @@ async def propose_event(body: ProposeEventBody):
         }
         return await _event_to_response_async(synthetic)
 
-    available_tools = [{"id": t["id"], "name": t["name"], "description": t["description"]} for t in get_available_tools()]
-    try:
-        from agent.propose_agent import select_tools_and_config, should_accept_event
-        config = select_tools_and_config(
-            body.name,
-            body.sourceUrl,
-            body.description,
-            available_tools,
-            window_minutes,
-        )
-    except Exception:
-        from agent.propose_agent import should_accept_event
+    if body.demo:
         config = {
             "channels": ["Hacker News", "Reddit"],
             "tools": ["hn_frontpage", "reddit"],
             "keywords": [body.name],
             "exclusions": [],
-            "window_minutes": window_minutes,
+            "window_minutes": 2,
+            "market_type": market_type,
+            "demo": True,
+            "demo_window_minutes": 2,
             "source_url": body.sourceUrl,
             "description": body.description,
         }
+    else:
+        available_tools = [{"id": t["id"], "name": t["name"], "description": t["description"]} for t in get_available_tools()]
+        try:
+            from agent.propose_agent import select_tools_and_config, should_accept_event
+            config = select_tools_and_config(
+                body.name,
+                body.sourceUrl,
+                body.description,
+                available_tools,
+                window_minutes,
+            )
+        except Exception:
+            from agent.propose_agent import should_accept_event
+            config = {
+                "channels": ["Hacker News", "Reddit"],
+                "tools": ["hn_frontpage", "reddit"],
+                "keywords": [body.name],
+                "exclusions": [],
+                "window_minutes": window_minutes,
+                "market_type": market_type,
+                "source_url": body.sourceUrl,
+                "description": body.description,
+            }
+        config["market_type"] = config.get("market_type") or market_type
+
+    # AI-generated headline/subline and button labels (emotional hook + conceptual clarity)
+    try:
+        from agent.propose_agent import suggest_headline_subline
+        hl = suggest_headline_subline(
+            body.name.strip(),
+            market_type,
+            source_url=body.sourceUrl,
+            description=body.description,
+        )
+        config["headline"] = hl.get("headline")
+        config["subline"] = hl.get("subline")
+        config["label_up"] = hl.get("label_up", "Heating up")
+        config["label_down"] = hl.get("label_down", "Cooling down")
+    except Exception:
+        config["headline"] = f"Is {body.name.strip()} gaining momentum?" if market_type == "1h" else f"Will {body.name.strip()} stay hot?"
+        config["subline"] = "Attention change · next 60 min" if market_type == "1h" else "Sustained attention · next 24h"
+        config["label_up"] = "Heating up"
+        config["label_down"] = "Cooling down"
+
     event_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc)
     window_end = now + timedelta(minutes=window_minutes)
@@ -169,31 +251,44 @@ async def propose_event(body: ProposeEventBody):
         index_start=100.0,
         config=config,
     )
-    index_value, activity = await build_index(event_id, config)
 
-    if not has_traction(activity):
-        config["reject_reason"] = NO_ATTENTION_REASON
-        await db.update_event_on_reject(event_id, config)
-        event = await db.get_event(event_id)
-        return await _event_to_response_async(event)
-
-    try:
-        decision = should_accept_event(body.name, index_value, activity)
-        accepted = decision.get("accept", True)
-    except Exception:
-        accepted = True
-    if accepted:
+    if body.demo:
+        # Demo: skip real index build and traction; accept immediately; tick_demo_index will drive synthetic index
+        await db.add_index_snapshot(event_id, get_iso_now(), 100.0)
         await db.update_event_on_accept(
             event_id,
             window_start_str,
             window_end_str,
             100.0,
-            index_value,
+            100.0,
             config,
         )
     else:
-        config["reject_reason"] = decision.get("reason", "Event not accepted for trading.")
-        await db.update_event_on_reject(event_id, config)
+        index_value, activity = await build_index(event_id, config)
+
+        if not has_traction(activity):
+            config["reject_reason"] = NO_ATTENTION_REASON
+            await db.update_event_on_reject(event_id, config)
+            event = await db.get_event(event_id)
+            return await _event_to_response_async(event)
+
+        try:
+            decision = should_accept_event(body.name, index_value, activity)
+            accepted = decision.get("accept", True)
+        except Exception:
+            accepted = True
+        if accepted:
+            await db.update_event_on_accept(
+                event_id,
+                window_start_str,
+                window_end_str,
+                100.0,
+                index_value,
+                config,
+            )
+        else:
+            config["reject_reason"] = decision.get("reason", "Event not accepted for trading.")
+            await db.update_event_on_reject(event_id, config)
     event = await db.get_event(event_id)
     return await _event_to_response_async(event)
 
@@ -215,16 +310,23 @@ async def suggest_window(body: SuggestWindowBody):
             suggest_window_only=True,
         )
         suggested = config.get("suggested_window_minutes", 60)
-        return {"suggestedWindowMinutes": max(1, int(suggested))}
+        # Return only canonical windows: 60 or 1440
+        mins = max(1, int(suggested))
+        if mins >= 1440:
+            mins = 1440
+        else:
+            mins = 60
+        return {"suggestedWindowMinutes": mins}
     except Exception:
         return {"suggestedWindowMinutes": 60}
 
 
 @router.get("")
-async def list_events(status: Optional[str] = None):
+async def list_events(status: Optional[str] = None, name: Optional[str] = None):
     # Default to open so main page shows only tradeable events
     effective_status = status if status is not None else "open"
-    events = await db.list_events(status=effective_status)
+    topic_name = name.strip() if name else None
+    events = await db.list_events(status=effective_status, name=topic_name)
     out = []
     for e in events:
         out.append(await _event_to_response_async(e))

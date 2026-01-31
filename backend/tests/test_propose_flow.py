@@ -23,14 +23,15 @@ client = TestClient(app)
 
 
 def test_propose_event_without_window_uses_default():
-    """Omitting windowMinutes uses default (24h). Activity above traction threshold -> accepted."""
+    """Omitting windowMinutes uses default (1h). Activity above traction threshold -> accepted."""
     with patch("agent.propose_agent.initial_reasonability_check", return_value={"pass": True, "reason": "ok"}):
         with patch("agent.propose_agent.select_tools_and_config") as mock_config:
             mock_config.return_value = {
                 "tools": ["hn_frontpage", "reddit"],
                 "keywords": ["test"],
                 "exclusions": [],
-                "window_minutes": 1440,
+                "window_minutes": 60,
+                "market_type": "1h",
                 "source_url": None,
                 "description": None,
             }
@@ -68,7 +69,7 @@ def test_propose_event_initial_check_rejection_returns_rejected():
 
 
 def test_propose_event_valid_window_accepted():
-    """Valid windowMinutes is accepted in body. Activity above traction threshold -> accepted."""
+    """Valid marketType/window is accepted. Activity above traction threshold -> accepted."""
     with patch("agent.propose_agent.initial_reasonability_check", return_value={"pass": True, "reason": "ok"}):
         with patch("agent.propose_agent.select_tools_and_config") as mock_config:
             mock_config.return_value = {
@@ -76,6 +77,7 @@ def test_propose_event_valid_window_accepted():
                 "keywords": ["test"],
                 "exclusions": [],
                 "window_minutes": 60,
+                "market_type": "1h",
                 "source_url": None,
                 "description": None,
             }
@@ -100,7 +102,8 @@ def test_propose_event_no_traction_rejected():
                 "tools": ["hn_frontpage", "reddit"],
                 "keywords": ["obscure"],
                 "exclusions": [],
-                "window_minutes": 1440,
+                "window_minutes": 60,
+                "market_type": "1h",
                 "source_url": None,
                 "description": None,
             }
@@ -130,7 +133,8 @@ def test_propose_event_build_index_completes_with_mocked_hn():
                 "tools": ["hn_frontpage", "reddit"],
                 "keywords": ["cursor hackathon"],
                 "exclusions": [],
-                "window_minutes": 1440,
+                "window_minutes": 60,
+                "market_type": "1h",
                 "source_url": None,
                 "description": None,
             }
@@ -145,3 +149,29 @@ def test_propose_event_build_index_completes_with_mocked_hn():
     assert r.status_code == 201
     data = r.json()
     assert data["status"] == "open"
+
+
+def test_propose_event_outcome_style_rejected():
+    """Outcome-style name (e.g. '100 stars by Friday') is rejected with suggestion."""
+    r = client.post(
+        "/events",
+        json={"name": "Will this repo get 100 GitHub stars by Friday?"},
+    )
+    assert r.status_code == 201
+    data = r.json()
+    assert data["status"] == "rejected"
+    assert "rejectReason" in data
+    assert "outcome" in data["rejectReason"].lower() or "attention" in data["rejectReason"].lower()
+
+
+def test_propose_event_demo_accepted():
+    """Demo event is accepted without reasonability/traction; 2-min window, synthetic index."""
+    r = client.post(
+        "/events",
+        json={"name": "Any Demo Topic", "demo": True},
+    )
+    assert r.status_code == 201
+    data = r.json()
+    assert data["status"] == "open"
+    assert data["demo"] is True
+    assert data["name"] == "Any Demo Topic"

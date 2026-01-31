@@ -15,6 +15,20 @@ export interface Event {
   priceUp: number;
   priceDown: number;
   createdAt: string;
+  /** Canonical market type: 1h (default) or 24h. */
+  marketType?: "1h" | "24h";
+  /** True when this is a demo market (accelerated dynamics, synthetic index). */
+  demo?: boolean;
+  /** Total traded volume (sum of amounts). */
+  volume?: number;
+  /** AI-generated emotional headline (e.g. "Is Clawdbot gaining momentum?"). */
+  headline?: string | null;
+  /** Precise subline (e.g. "Attention change · next 60 min"). */
+  subline?: string | null;
+  /** Button label for up side (e.g. "Heating up"). */
+  labelUp?: string | null;
+  /** Button label for down side (e.g. "Cooling down"). */
+  labelDown?: string | null;
   /** Present when status is "rejected". */
   rejectReason?: string;
 }
@@ -37,11 +51,18 @@ export interface ProfileTrade {
 /** Propose an event: backend runs reasonability check (Gemini + Google Search), agent, index build, accept decision. */
 export async function proposeEvent(
   name: string,
-  options?: { sourceUrl?: string; description?: string }
+  options?: {
+    sourceUrl?: string;
+    description?: string;
+    marketType?: "1h" | "24h";
+    demo?: boolean;
+  }
 ): Promise<Event> {
   const body: Record<string, unknown> = { name };
   if (options?.sourceUrl) body.sourceUrl = options.sourceUrl;
   if (options?.description) body.description = options.description;
+  if (options?.marketType) body.marketType = options.marketType;
+  if (options?.demo) body.demo = options.demo;
   const res = await fetch(`${BASE}/events`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -75,8 +96,14 @@ export async function suggestWindowMinutes(params: {
   return res.json();
 }
 
-export async function listEvents(status?: "open" | "resolved"): Promise<{ events: Event[] }> {
-  const q = status ? `?status=${status}` : "";
+export async function listEvents(params?: {
+  status?: "open" | "resolved";
+  name?: string;
+}): Promise<{ events: Event[] }> {
+  const search = new URLSearchParams();
+  if (params?.status) search.set("status", params.status);
+  if (params?.name?.trim()) search.set("name", params.name.trim());
+  const q = search.toString() ? `?${search}` : "";
   const res = await fetch(`${BASE}/events${q}`);
   if (!res.ok) throw new Error(res.statusText);
   return res.json();

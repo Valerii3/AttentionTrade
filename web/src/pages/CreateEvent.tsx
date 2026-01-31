@@ -8,6 +8,9 @@ export default function CreateEvent() {
   const [name, setName] = useState("");
   const [sourceUrl, setSourceUrl] = useState("");
   const [description, setDescription] = useState("");
+  const [marketType, setMarketType] = useState<"1h" | "24h">("1h");
+  const [demo, setDemo] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [successModal, setSuccessModal] = useState(false);
@@ -30,6 +33,8 @@ export default function CreateEvent() {
       const event = await proposeEvent(name.trim(), {
         sourceUrl: sourceUrl.trim() || undefined,
         description: description.trim() || undefined,
+        marketType,
+        demo,
       });
       if (event.status === "open") {
         setAcceptedEventId(event.id);
@@ -125,8 +130,11 @@ export default function CreateEvent() {
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
           <label className="block text-sm font-medium text-foreground mb-1.5">
-            Event name
+            Topic or event
           </label>
+          <p className="text-xs text-muted-foreground mb-1.5">
+            The market will ask: Will attention around this increase in the next 60 minutes?
+          </p>
           <Input
             type="text"
             value={name}
@@ -159,6 +167,53 @@ export default function CreateEvent() {
             className="flex min-h-[60px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
           />
         </div>
+        {showAdvanced && (
+          <div className="space-y-2">
+            <label className="block text-sm font-medium text-foreground">
+              Market type
+            </label>
+            <div className="flex flex-col gap-2">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="radio"
+                  name="marketType"
+                  checked={marketType === "1h"}
+                  onChange={() => setMarketType("1h")}
+                  className="accent-primary"
+                />
+                <span className="text-sm">1h — Will attention increase in the next 60 minutes?</span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="radio"
+                  name="marketType"
+                  checked={marketType === "24h"}
+                  onChange={() => setMarketType("24h")}
+                  className="accent-primary"
+                />
+                <span className="text-sm">24h — Will attention remain elevated over the next 24h?</span>
+              </label>
+            </div>
+          </div>
+        )}
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={demo}
+            onChange={(e) => setDemo(e.target.checked)}
+            className="accent-primary rounded"
+          />
+          <span className="text-sm text-muted-foreground">
+            Create demo market (2-min window, accelerated attention dynamics)
+          </span>
+        </label>
+        <button
+          type="button"
+          onClick={() => setShowAdvanced(!showAdvanced)}
+          className="text-sm text-muted-foreground hover:text-foreground"
+        >
+          {showAdvanced ? "Hide" : "Show"} advanced (24h market)
+        </button>
         {error && (
           <p className="text-sm text-destructive">{error}</p>
         )}

@@ -6,35 +6,11 @@ import {
   type AttentionEventCardData,
 } from "./market-card";
 
-const DEMO_MARKETS: AttentionEventCardData[] = [
-  {
-    name: "Will 'Attention Economy' trend on Twitter this week?",
-    status: "open",
-    priceUp: 0.52,
-    priceDown: 0.48,
-    resolution: null,
-    volume: "—",
-    isDemo: true,
-  },
-  {
-    name: "Will this repo get 100 GitHub stars by Friday?",
-    status: "open",
-    priceUp: 0.38,
-    priceDown: 0.62,
-    resolution: null,
-    volume: "—",
-    isDemo: true,
-  },
-  {
-    name: "Will AI headlines dominate front page tomorrow?",
-    status: "open",
-    priceUp: 0.71,
-    priceDown: 0.29,
-    resolution: null,
-    volume: "—",
-    isDemo: true,
-  },
-];
+function formatVolume(v: number | undefined): string {
+  if (v == null || v === 0) return "0";
+  if (v >= 1000) return `${(v / 1000).toFixed(1)}k`;
+  return String(Math.round(v));
+}
 
 function eventToCard(e: Event): AttentionEventCardData {
   return {
@@ -45,8 +21,14 @@ function eventToCard(e: Event): AttentionEventCardData {
     priceDown: e.priceDown,
     resolution: e.resolution,
     indexCurrent: e.indexCurrent,
-    volume: "—",
+    volume: formatVolume(e.volume),
     isDemo: false,
+    marketType: e.marketType ?? "1h",
+    demo: e.demo,
+    headline: e.headline ?? undefined,
+    subline: e.subline ?? undefined,
+    labelUp: e.labelUp ?? undefined,
+    labelDown: e.labelDown ?? undefined,
   };
 }
 
@@ -75,7 +57,7 @@ export function MarketGrid({ selectedCategory, selectedFilter }: MarketGridProps
             : selectedFilter === "Resolved"
               ? "resolved"
               : undefined;
-        const { events: list } = await listEvents(status);
+        const { events: list } = await listEvents(status !== undefined ? { status } : {});
         if (!cancelled) setEvents(list);
       } catch {
         if (!cancelled) setEvents([]);
@@ -97,8 +79,7 @@ export function MarketGrid({ selectedCategory, selectedFilter }: MarketGridProps
     );
   }
 
-  const apiCards = events.map(eventToCard);
-  const allCards = [...apiCards, ...DEMO_MARKETS];
+  const cards = events.map(eventToCard);
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 p-4">
@@ -106,14 +87,14 @@ export function MarketGrid({ selectedCategory, selectedFilter }: MarketGridProps
         <div className="col-span-full text-center py-12 text-muted-foreground">
           Loading…
         </div>
-      ) : allCards.length === 0 ? (
+      ) : cards.length === 0 ? (
         <div className="col-span-full text-center py-12 text-muted-foreground">
           No markets yet. Create one to get started.
         </div>
       ) : (
-        allCards.map((market, i) => (
+        cards.map((market) => (
           <AttentionEventCard
-            key={market.eventId ?? `demo-${i}`}
+            key={market.eventId}
             market={market}
           />
         ))

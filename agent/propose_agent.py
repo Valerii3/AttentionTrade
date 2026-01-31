@@ -5,6 +5,7 @@ Uses GEMINI_API_KEY when set; otherwise falls back to event_definition + always 
 import json
 import logging
 import os
+import re
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
@@ -18,6 +19,11 @@ NO_ATTENTION_REASON = (
     "There isn't enough attention for this event yet, so it's not tradable."
 )
 
+OUTCOME_STYLE_SUGGESTION = (
+    "This is an outcome market (resolvable by checking one number). "
+    "Try instead: \"Will attention around [your topic] increase in the next 60 minutes?\""
+)
+
 
 def has_traction(activity: Optional[dict[str, float]]) -> bool:
     """Return True if total activity meets the traction threshold (event is tradable)."""
@@ -25,6 +31,30 @@ def has_traction(activity: Optional[dict[str, float]]) -> bool:
         return False
     total = sum(activity.values())
     return total >= MIN_TRACTION_SCORE
+
+
+def reject_reason_if_outcome_style(name: str, description: Optional[str]) -> Optional[str]:
+    """
+    If the event name/description looks like an outcome-style market (resolvable by one number), return a reject reason.
+    Otherwise return None. Used to enforce attention-native framing.
+    """
+    text = f"{name} {description or ''}".lower()
+    # N stars/likes/followers/users/downloads
+    if re.search(r"\d+\s*(stars?|likes?|followers?|users?|downloads?|subscribers?)", text):
+        return OUTCOME_STYLE_SUGGESTION
+    # by Friday / by tomorrow / before date
+    if re.search(r"\b(by|before)\s+(friday|monday|tuesday|wednesday|thursday|saturday|sunday|tomorrow|next\s+week|\d)", text):
+        return OUTCOME_STYLE_SUGGESTION
+    # get/hit/reach N (number)
+    if re.search(r"\b(get|hit|reach)\s+\d+", text):
+        return OUTCOME_STYLE_SUGGESTION
+    # "100 GitHub stars" style
+    if re.search(r"\d+\s*(github\s+)?stars?", text) or re.search(r"stars?\s*by\s", text):
+        return OUTCOME_STYLE_SUGGESTION
+    # "will X launch" (product launch = one fact)
+    if re.search(r"\bwill\s+.+\s+launch\b", text):
+        return OUTCOME_STYLE_SUGGESTION
+    return None
 
 
 def initial_reasonability_check(
@@ -56,12 +86,12 @@ def initial_reasonability_check(
 
     prompt = (
         "You check whether an event is suitable for an attention-trading market (tradable on attention). "
-        "Use the event name and description (if provided) to understand what the event is. "
-        "Use Google Search to verify the event is real and discussed on the web. "
+        "Rules: (1) The event must be about ATTENTION (e.g. 'Will attention around X increase?'), not an outcome resolvable by one number. "
+        "If the event is an outcome market (e.g. 'Will X get 100 stars by Friday?', 'Will X hit N users?', 'Will X launch?'), reply with pass: false and reason: \"This is an outcome market (resolvable by checking one number). Try instead: Will attention around [topic] increase in the next 60 minutes?\" "
+        "(2) Use the event name and description to understand what the event is. (3) Use Google Search to verify the event is real and discussed on the web. "
         "If you find no or insufficient information, the event is not tradable. "
         "Reply with ONLY a JSON object: {\"pass\": true or false, \"reason\": \"short explanation\"}. "
-        "If pass is false, reason should be user-friendly (e.g. \"We couldn't find enough information about this event on the web, so it's not tradable yet.\"). "
-        "No markdown, no code fences.\n\n"
+        "If pass is false, reason should be user-friendly. No markdown, no code fences.\n\n"
         + user_content
     )
 
@@ -278,3 +308,84 @@ def should_accept_event(
         return {"accept": bool(out.get("accept", True)), "reason": out.get("reason", "")}
     except Exception:
         return {"accept": True, "reason": "Error calling Gemini; accepted by default."}
+
+
+def suggest_headline_subline(
+    name: str,
+    market_type: str,
+    *,
+    source_url: Optional[str] = None,
+    description: Optional[str] = None,
+) -> dict[str, Any]:
+    """
+    Return headline (emotional hook) and subline (precise) for the market card/detail.
+    Optional label_up / label_down for buttons (e.g. "Heating up" / "Cooling down").
+    Uses Gemini when GEMINI_API_KEY set; else sensible defaults.
+    """
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        return _headline_subline_default(name, market_type)
+
+    try:
+        from google import genai
+        client = genai.Client(api_key=api_key)
+    except ImportError:
+        return _headline_subline_default(name, market_type)
+
+    window_desc = "next 60 min" if market_type == "1h" else "next 24h"
+    subline_template = "Attention change · next 60 min" if market_type == "1h" else "Sustained attention · next 24h"
+    user_parts = [f"Topic/event name: {name}. Window: {window_desc}."]
+    if source_url:
+        user_parts.append(f"Source URL: {source_url}")
+    if description:
+        user_parts.append(f"Description: {description}")
+    user_content = " ".join(user_parts)
+
+    prompt = (
+        "You write a short, punchy HEADLINE and SUBLINE for an attention market card. "
+        "Rules: HEADLINE = emotional hook, human language (e.g. 'Is Clawdbot gaining momentum?', 'Is the Cursor Hackathon heating up?', 'Is the Attention Economy narrative accelerating?'). "
+        "SUBLINE = precise, same for all: either 'Attention change · next 60 min' or 'Sustained attention · next 24h' depending on window. "
+        "Also output two short button labels: label_up (for betting attention goes up, e.g. 'Heating up' or 'Momentum ↑') and label_down (e.g. 'Cooling down' or 'Momentum ↓'). "
+        "Reply with ONLY a JSON object: {\"headline\": \"...\", \"subline\": \"...\", \"label_up\": \"...\", \"label_down\": \"...\"}. No markdown."
+        + "\n\n" + user_content
+    )
+    try:
+        response = client.models.generate_content(
+            model="gemini-2.5-flash-lite",
+            contents=prompt,
+        )
+        if hasattr(response, "text"):
+            text = response.text
+        elif response.candidates and response.candidates[0].content.parts:
+            text = response.candidates[0].content.parts[0].text
+        else:
+            return _headline_subline_default(name, market_type)
+        text = (text or "").strip()
+        if text.startswith("```"):
+            text = text.split("\n", 1)[1] if "\n" in text else text[3:]
+        if text.endswith("```"):
+            text = text.rsplit("```", 1)[0].strip()
+        out = json.loads(text)
+        headline = (out.get("headline") or "").strip() or _headline_subline_default(name, market_type)["headline"]
+        subline = (out.get("subline") or "").strip() or ("Attention change · next 60 min" if market_type == "1h" else "Sustained attention · next 24h")
+        label_up = (out.get("label_up") or "").strip() or "Heating up"
+        label_down = (out.get("label_down") or "").strip() or "Cooling down"
+        return {"headline": headline, "subline": subline, "label_up": label_up, "label_down": label_down}
+    except Exception:
+        return _headline_subline_default(name, market_type)
+
+
+def _headline_subline_default(name: str, market_type: str) -> dict[str, Any]:
+    """Default headline/subline when no Gemini."""
+    if market_type == "24h":
+        headline = f"Will {name} stay hot?"
+        subline = "Sustained attention · next 24h"
+    else:
+        headline = f"Is {name} gaining momentum?"
+        subline = "Attention change · next 60 min"
+    return {
+        "headline": headline,
+        "subline": subline,
+        "label_up": "Heating up",
+        "label_down": "Cooling down",
+    }

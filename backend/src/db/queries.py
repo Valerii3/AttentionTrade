@@ -85,13 +85,23 @@ async def get_event(event_id: str) -> Optional[dict]:
     return r
 
 
-async def list_events(status: Optional[str] = None) -> list[dict]:
+async def list_events(status: Optional[str] = None, name: Optional[str] = None) -> list[dict]:
     conn = await get_db()
     try:
-        if status:
+        if status and name:
+            cursor = await conn.execute(
+                "SELECT * FROM events WHERE status = ? AND name = ? ORDER BY created_at DESC",
+                (status, name),
+            )
+        elif status:
             cursor = await conn.execute(
                 "SELECT * FROM events WHERE status = ? ORDER BY created_at DESC",
                 (status,),
+            )
+        elif name:
+            cursor = await conn.execute(
+                "SELECT * FROM events WHERE name = ? ORDER BY created_at DESC",
+                (name,),
             )
         else:
             cursor = await conn.execute(
@@ -171,6 +181,20 @@ async def get_position(event_id: str) -> tuple[float, float]:
     if not row:
         return 0.0, 0.0
     return row[0], row[1]
+
+
+async def get_volume(event_id: str) -> float:
+    """Return total traded volume (sum of amounts) for this event."""
+    conn = await get_db()
+    try:
+        cursor = await conn.execute(
+            "SELECT COALESCE(SUM(amount), 0) FROM trades WHERE event_id = ?",
+            (event_id,),
+        )
+        row = await cursor.fetchone()
+    finally:
+        await conn.close()
+    return float(row[0]) if row else 0.0
 
 
 async def add_trade(
