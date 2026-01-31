@@ -53,6 +53,19 @@ See [docs/api.md](docs/api.md) for endpoints and request/response shapes.
 
 - **`scripts/play_gemini.py`** — Standalone script to play with the Gemini API. Run from project root: `python scripts/play_gemini.py` (set `GEMINI_API_KEY` in env or pass as first arg).
 
+## Tests
+
+From project root. Install backend deps first (so `test_propose_flow` runs; otherwise it is skipped):
+
+```bash
+cd backend && pip install -r requirements.txt && cd ..
+pytest backend/tests/ -v
+```
+
+Or use the backend venv: `backend/.venv/bin/python -m pytest backend/tests/ -v`
+
+Tests cover: period conversion (1h/8h/24h/1w), initial reasonability check (e.g. "some mess" with empty search → reject), and propose flow (rejected vs open).
+
 ## Features
 
 - Propose events with name, optional URL/description, and time window; Gemini (or fallback) selects tools and builds the index; AI accepts or rejects for trading. When accepted, event is open for trading.

@@ -8,8 +8,7 @@ Base URL: `http://localhost:8000` (or set via env).
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| POST | `/events` | Propose event; backend runs agent (tool selection, index build, accept decision). Returns event with status `open` (accepted) or `rejected`. |
-| POST | `/events/suggest-window` | Get AI-suggested window duration (minutes) for name/URL/description |
+| POST | `/events` | Propose event; backend runs initial reasonability check (Google Search), agent, index build, accept decision. Returns event with status `open` or `rejected`. |
 | GET | `/events` | List events (optional query: `?status=open` or `?status=resolved`) |
 | GET | `/events/:id` | Event detail + current index, window, resolution, prices |
 | GET | `/events/:id/index-history` | Time series for chart |
@@ -26,43 +25,20 @@ Base URL: `http://localhost:8000` (or set via env).
 ```json
 {
   "name": "Cursor Hackathon Dec 24",
-  "windowMinutes": 60,
+  "period": "24h",
   "sourceUrl": "https://reddit.com/r/cursor/...",
   "description": "Optional short context"
 }
 ```
 
-- `name` (required), `windowMinutes` (required).
+- `name` (required), `period` (required): one of `1h`, `8h`, `24h`, `1w`.
 - `sourceUrl` (optional): e.g. Reddit URL.
 - `description` (optional): short context if no URL.
 
-Backend runs: agent tool selection (Gemini when `GEMINI_API_KEY` set), real index build, then accept decision (Gemini). Event is stored as `proposed` during analysis, then set to `open` (accepted) or `rejected`.
+Backend runs: initial reasonability check (Gemini + Google Search–style tool), then agent tool selection, real index build, accept decision. Event is stored as `proposed` during analysis, then set to `open` (accepted) or `rejected`.
 
 **Response:** `201 Created`  
 Body: full **Event** object (see below). `status` is `open` (accepted, ready to trade), `rejected` (not accepted), or `proposed` (if returned before accept/reject).
-
----
-
-### POST /events/suggest-window
-
-**Request body:**
-```json
-{
-  "name": "Cursor Hackathon Dec 24",
-  "sourceUrl": "https://reddit.com/r/cursor/...",
-  "description": "Optional short context"
-}
-```
-
-- `name` (required). `sourceUrl` and `description` optional.
-
-**Response:** `200 OK`  
-Body:
-```json
-{
-  "suggestedWindowMinutes": 60
-}
-```
 
 ---
 

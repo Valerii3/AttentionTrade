@@ -1,12 +1,91 @@
 """
-Gemini-based agent for propose flow: tool selection and accept decision.
+Gemini-based agent for propose flow: initial reasonability check (Google Search), tool selection, accept decision.
 Uses GEMINI_API_KEY when set; otherwise falls back to event_definition + always accept.
 """
 import json
 import os
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 DEFAULT_TOOL_IDS = ["hn_frontpage", "reddit"]
+
+
+def initial_reasonability_check(
+    name: str,
+    source_url: Optional[str],
+    description: Optional[str],
+    search_fn: Callable[[str], str],
+) -> dict[str, Any]:
+    """
+    Check if the event is reasonable in general using a Google Search–style tool.
+    Gemini suggests a search query; we run search_fn(query); Gemini decides if we found something similar.
+    Returns {"pass": bool, "reason": str}. If not pass, reject the event with reason.
+    """
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        return {"pass": True, "reason": "No API key; skipping initial check."}
+
+    try:
+        from google import genai
+        client = genai.Client(api_key=api_key)
+    except ImportError:
+        return {"pass": True, "reason": "Gemini not available; skipping check."}
+
+    user_parts = [f"Event name: {name}."]
+    if source_url:
+        user_parts.append(f"Source URL: {source_url}")
+    if description:
+        user_parts.append(f"Description: {description}")
+    user_content = " ".join(user_parts)
+
+    try:
+        query_prompt = (
+            "You are checking if an event is a real, reasonable topic for an attention-tracking market. "
+            "Output a single Google search query (one line, no quotes) to verify this event exists or is discussed. "
+            "Output ONLY the search query, nothing else.\n\n" + user_content
+        )
+        response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=query_prompt,
+        )
+        if hasattr(response, "text"):
+            query = response.text.strip().strip('"')
+        elif response.candidates and response.candidates[0].content.parts:
+            query = response.candidates[0].content.parts[0].text.strip().strip('"')
+        else:
+            return {"pass": True, "reason": "Could not get search query; proceeding."}
+        if not query:
+            return {"pass": True, "reason": "Empty query; proceeding."}
+
+        search_results = search_fn(query)
+
+        judge_prompt = (
+            f"Event: {user_content}\n\n"
+            "Google search was run for this event. Search results:\n"
+            f"{search_results if search_results else '(No results found)'}\n\n"
+            "Is this event reasonable and did we find something similar or relevant? "
+            "If there are no results or nothing relevant, say no. "
+            "Reply with ONLY a JSON object: {\"pass\": true or false, \"reason\": \"short explanation\"}. No markdown."
+        )
+        response2 = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=judge_prompt,
+        )
+        if hasattr(response2, "text"):
+            text = response2.text
+        elif response2.candidates and response2.candidates[0].content.parts:
+            text = response2.candidates[0].content.parts[0].text
+        else:
+            return {"pass": True, "reason": "Could not parse judge response; proceeding."}
+
+        text = text.strip()
+        if text.startswith("```"):
+            text = text.split("\n", 1)[1] if "\n" in text else text[3:]
+        if text.endswith("```"):
+            text = text.rsplit("```", 1)[0].strip()
+        out = json.loads(text)
+        return {"pass": bool(out.get("pass", False)), "reason": out.get("reason", "")}
+    except Exception:
+        return {"pass": True, "reason": "Error during initial check; proceeding."}
 
 
 def select_tools_and_config(

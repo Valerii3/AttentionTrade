@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { proposeEvent, suggestWindowMinutes } from "../api-client/client";
+import { proposeEvent, type EventPeriod } from "../api-client/client";
 
 const inputStyle = {
   width: "100%",
@@ -11,40 +11,25 @@ const inputStyle = {
   borderRadius: "4px",
 };
 
+const PERIODS: { value: EventPeriod; label: string }[] = [
+  { value: "1h", label: "1 hour" },
+  { value: "8h", label: "8 hours" },
+  { value: "24h", label: "24 hours" },
+  { value: "1w", label: "1 week" },
+];
+
 export default function CreateEvent() {
   const [name, setName] = useState("");
   const [sourceUrl, setSourceUrl] = useState("");
   const [description, setDescription] = useState("");
-  const [windowMinutes, setWindowMinutes] = useState(60);
+  const [period, setPeriod] = useState<EventPeriod>("24h");
   const [loading, setLoading] = useState(false);
-  const [suggestLoading, setSuggestLoading] = useState(false);
   const [error, setError] = useState("");
   const [successModal, setSuccessModal] = useState(false);
   const [acceptedEventId, setAcceptedEventId] = useState<string | null>(null);
   const [rejectedMessage, setRejectedMessage] = useState<string | null>(null);
 
   const navigate = useNavigate();
-
-  async function handleSuggestDuration() {
-    if (!name.trim()) {
-      setError("Name is required to suggest duration");
-      return;
-    }
-    setError("");
-    setSuggestLoading(true);
-    try {
-      const { suggestedWindowMinutes } = await suggestWindowMinutes({
-        name: name.trim(),
-        sourceUrl: sourceUrl.trim() || undefined,
-        description: description.trim() || undefined,
-      });
-      setWindowMinutes(Math.max(1, suggestedWindowMinutes));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to suggest duration");
-    } finally {
-      setSuggestLoading(false);
-    }
-  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -56,7 +41,7 @@ export default function CreateEvent() {
     }
     setLoading(true);
     try {
-      const event = await proposeEvent(name.trim(), windowMinutes, {
+      const event = await proposeEvent(name.trim(), period, {
         sourceUrl: sourceUrl.trim() || undefined,
         description: description.trim() || undefined,
       });
@@ -159,32 +144,18 @@ export default function CreateEvent() {
           />
         </div>
         <div style={{ marginBottom: "1rem" }}>
-          <label style={{ display: "block", marginBottom: "0.25rem" }}>Window (minutes)</label>
-          <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
-            <input
-              type="number"
-              min={1}
-              value={windowMinutes}
-              onChange={(e) => setWindowMinutes(Number(e.target.value) || 60)}
-              style={{ ...inputStyle, flex: 1 }}
-            />
-            <button
-              type="button"
-              onClick={handleSuggestDuration}
-              disabled={suggestLoading || !name.trim()}
-              style={{
-                padding: "0.5rem 0.75rem",
-                background: "#3f3f46",
-                color: "#e4e4e7",
-                border: "1px solid #52525b",
-                borderRadius: "4px",
-                cursor: suggestLoading || !name.trim() ? "not-allowed" : "pointer",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {suggestLoading ? "…" : "Suggest duration"}
-            </button>
-          </div>
+          <label style={{ display: "block", marginBottom: "0.25rem" }}>Period</label>
+          <select
+            value={period}
+            onChange={(e) => setPeriod(e.target.value as EventPeriod)}
+            style={inputStyle}
+          >
+            {PERIODS.map((p) => (
+              <option key={p.value} value={p.value}>
+                {p.label}
+              </option>
+            ))}
+          </select>
         </div>
         {error && (
           <p style={{ color: "#f87171", marginBottom: "1rem" }}>{error}</p>
