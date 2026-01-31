@@ -33,6 +33,7 @@ class SuggestWindowBody(BaseModel):
 class TradeBody(BaseModel):
     side: str  # "up" | "down"
     amount: float
+    trader_id: Optional[str] = None
 
 
 def _event_to_response(e: dict) -> dict:
@@ -258,7 +259,7 @@ async def trade(event_id: str, body: TradeBody):
         raise HTTPException(status_code=404, detail="Event not found")
     if event["status"] != "open":
         raise HTTPException(status_code=409, detail="Event is not open for trading")
-    await db.add_trade(event_id, body.side, body.amount)
+    await db.add_trade(event_id, body.side, body.amount, body.trader_id)
     net_up, net_down = await db.get_position(event_id)
     price_up, price_down = prices_from_position(net_up, net_down)
     return {"ok": True, "priceUp": price_up, "priceDown": price_down}

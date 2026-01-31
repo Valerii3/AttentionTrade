@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS trades (
   event_id TEXT NOT NULL REFERENCES events(id),
   side TEXT NOT NULL,  -- up | down
   amount REAL NOT NULL,
+  trader_id TEXT,  -- optional; links trade to profile
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -38,3 +39,4 @@ CREATE TABLE IF NOT EXISTS event_positions (
 
 CREATE INDEX IF NOT EXISTS idx_index_snapshots_event ON index_snapshots(event_id);
 CREATE INDEX IF NOT EXISTS idx_trades_event ON trades(event_id);
+CREATE INDEX IF NOT EXISTS idx_trades_trader ON trades(trader_id);

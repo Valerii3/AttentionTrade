@@ -24,6 +24,16 @@ export interface IndexHistoryPoint {
   index: number;
 }
 
+export interface ProfileTrade {
+  eventId: string;
+  eventName: string;
+  side: "up" | "down";
+  amount: number;
+  createdAt: string;
+  status: string;
+  resolution: "up" | "down" | null;
+}
+
 /** Propose an event: backend runs reasonability check (Gemini + Google Search), agent, index build, accept decision. */
 export async function proposeEvent(
   name: string,
@@ -90,17 +100,30 @@ export async function getIndexHistory(id: string): Promise<{ history: IndexHisto
 export async function trade(
   eventId: string,
   side: "up" | "down",
-  amount: number
+  amount: number,
+  traderId?: string
 ): Promise<{ ok: boolean; priceUp: number; priceDown: number }> {
+  const body: Record<string, unknown> = { side, amount };
+  if (traderId) body.trader_id = traderId;
   const res = await fetch(`${BASE}/events/${eventId}/trade`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ side, amount }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) {
     const d = await res.json().catch(() => ({}));
     throw new Error(d.detail || res.statusText);
   }
+  return res.json();
+}
+
+export async function getProfileTrades(
+  traderId: string
+): Promise<{ trades: ProfileTrade[] }> {
+  const res = await fetch(
+    `${BASE}/profile/trades?trader_id=${encodeURIComponent(traderId)}`
+  );
+  if (!res.ok) throw new Error(res.statusText);
   return res.json();
 }
 

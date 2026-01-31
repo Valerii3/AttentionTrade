@@ -16,10 +16,25 @@ async def get_db():
 
 
 async def init_db():
-    with open(SCHEMA_PATH) as f:
-        schema = f.read()
     conn = await get_db()
     try:
+        # Migration first: add trader_id to existing trades table if missing (so schema's CREATE INDEX succeeds)
+        cursor = await conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='trades'"
+        )
+        has_trades = (await cursor.fetchone()) is not None
+        if has_trades:
+            cursor = await conn.execute("PRAGMA table_info(trades)")
+            columns = [row[1] for row in await cursor.fetchall()]
+            if "trader_id" not in columns:
+                await conn.execute("ALTER TABLE trades ADD COLUMN trader_id TEXT")
+                await conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_trades_trader ON trades(trader_id)"
+                )
+        await conn.commit()
+
+        with open(SCHEMA_PATH) as f:
+            schema = f.read()
         await conn.executescript(schema)
         await conn.commit()
     finally:
@@ -158,7 +173,9 @@ async def get_position(event_id: str) -> tuple[float, float]:
     return row[0], row[1]
 
 
-async def add_trade(event_id: str, side: str, amount: float) -> None:
+async def add_trade(
+    event_id: str, side: str, amount: float, trader_id: Optional[str] = None
+) -> None:
     conn = await get_db()
     try:
         if side == "up":
@@ -172,12 +189,44 @@ async def add_trade(event_id: str, side: str, amount: float) -> None:
                 (amount, event_id),
             )
         await conn.execute(
-            "INSERT INTO trades (event_id, side, amount) VALUES (?, ?, ?)",
-            (event_id, side, amount),
+            "INSERT INTO trades (event_id, side, amount, trader_id) VALUES (?, ?, ?, ?)",
+            (event_id, side, amount, trader_id),
         )
         await conn.commit()
     finally:
         await conn.close()
+
+
+async def list_trades_by_trader(trader_id: str) -> list[dict]:
+    """Return trades for a trader with event name, status, resolution (join with events)."""
+    conn = await get_db()
+    try:
+        cursor = await conn.execute(
+            """
+            SELECT t.event_id, t.side, t.amount, t.created_at,
+                   e.name AS event_name, e.status AS event_status, e.resolution
+            FROM trades t
+            JOIN events e ON e.id = t.event_id
+            WHERE t.trader_id = ?
+            ORDER BY t.created_at ASC
+            """,
+            (trader_id,),
+        )
+        rows = await cursor.fetchall()
+    finally:
+        await conn.close()
+    return [
+        {
+            "event_id": r[0],
+            "side": r[1],
+            "amount": r[2],
+            "created_at": r[3],
+            "event_name": r[4],
+            "event_status": r[5],
+            "resolution": r[6],
+        }
+        for r in rows
+    ]
 
 
 async def set_event_status(event_id: str, status: str) -> None:

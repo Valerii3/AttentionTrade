@@ -20,6 +20,7 @@ if _project_root not in sys.path:
 
 from backend.src.db import queries as db
 from backend.src.routes.events import router as events_router
+from backend.src.routes.profile import router as profile_router
 from backend.src.services.index_pipeline import compute_index, get_iso_now
 from backend.src.services.trading import prices_from_position
 
@@ -88,3 +89,4 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(events_router)
+app.include_router(profile_router)

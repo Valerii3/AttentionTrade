@@ -13,8 +13,9 @@ Base URL: `http://localhost:8000` (or set via env).
 | GET | `/events` | List events (optional query: `?status=open` or `?status=resolved`) |
 | GET | `/events/:id` | Event detail + current index, window, resolution, prices |
 | GET | `/events/:id/index-history` | Time series for chart |
-| POST | `/events/:id/trade` | Submit belief (side + amount); demo credits only |
+| POST | `/events/:id/trade` | Submit belief (side + amount; optional `trader_id`); demo credits only |
 | GET | `/events/:id/explanation` | Short text "why index moved" (after resolution) |
+| GET | `/profile/trades` | List trades for a trader (query: `?trader_id=xxx`) |
 
 ---
 
@@ -138,11 +139,14 @@ Body:
 ```json
 {
   "side": "up" | "down",
-  "amount": 10
+  "amount": 10,
+  "trader_id": "optional-uuid"
 }
 ```
 
-- `amount`: demo credits (positive number).
+- `side` (required): `"up"` or `"down"`.
+- `amount` (required): demo credits (positive number).
+- `trader_id` (optional): if provided, the trade is associated with this trader for the profile page.
 
 **Response:** `200 OK`  
 Body:
@@ -153,6 +157,33 @@ Body:
   "priceDown": 0.45
 }
 ```
+
+---
+
+### GET /profile/trades
+
+**Query params:**
+- `trader_id` (required): UUID of the trader (e.g. from frontend localStorage).
+
+**Response:** `200 OK`  
+Body:
+```json
+{
+  "trades": [
+    {
+      "eventId": "uuid",
+      "eventName": "string",
+      "side": "up" | "down",
+      "amount": 10,
+      "createdAt": "ISO8601",
+      "status": "open" | "resolved",
+      "resolution": "up" | "down" | null
+    }
+  ]
+}
+```
+
+- `status` and `resolution` are from the event at response time; frontend can compute won/lost and PnL from these.
 
 ---
 

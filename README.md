@@ -24,7 +24,7 @@ cd ..
 uvicorn backend.src.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-The API runs at `http://localhost:8000`. The **SQLite** DB file is `attention.db` in the project root (or set `ATTENTION_DB_PATH`).
+The API runs at `http://localhost:8000`. The **SQLite** DB file is `attention.db` in the project root (or set `ATTENTION_DB_PATH`). If you have an existing database, the backend automatically adds the optional `trader_id` column to the trades table on startup (for the profile feature).
 
 ### Web
 
@@ -59,3 +59,4 @@ See [docs/api.md](docs/api.md) for endpoints and request/response shapes.
 - Index updates every 1 minute from Hacker News (and placeholder Reddit); index = 100 + 10 × normalized delta.
 - Trade “Attention ↑” or “Attention ↓” with demo credits; belief-based pricing (sigmoid).
 - When the window ends, event resolves to up/down and an optional AI explanation is stored.
+- **Profile**: Enter a display name (stored only in the browser). Trades are associated with your trader id so you can see your trades, total PnL, and PnL over time on the profile page. No registration.

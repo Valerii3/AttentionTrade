@@ -18,6 +18,7 @@ import {
 } from "recharts";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useProfile } from "@/contexts/profile-context";
 
 const POLL_MS = 30000;
 
@@ -58,13 +59,16 @@ export default function EventDetail() {
     return () => clearInterval(t);
   }, [id]);
 
+  const { profile } = useProfile();
+  const traderId = profile?.traderId;
+
   async function handleTrade(e: React.FormEvent) {
     e.preventDefault();
     if (!id || !event || event.status !== "open") return;
     setError("");
     setTrading(true);
     try {
-      await trade(id, tradeSide, tradeAmount);
+      await trade(id, tradeSide, tradeAmount, traderId);
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Trade failed");

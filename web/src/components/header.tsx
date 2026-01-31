@@ -40,6 +40,11 @@ export function Header() {
             <HelpCircle className="h-4 w-4" />
             <span className="hidden lg:inline">How it works</span>
           </Button>
+          <Link to="/profile">
+            <Button variant="ghost" className="text-foreground hover:text-foreground/80">
+              Profile
+            </Button>
+          </Link>
           <Link to="/create">
             <Button className="bg-primary text-primary-foreground hover:bg-primary/90">
               Create event
