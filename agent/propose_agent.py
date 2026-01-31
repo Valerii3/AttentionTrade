@@ -11,6 +11,21 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_TOOL_IDS = ["hn_frontpage", "reddit"]
 
+# Minimum total activity (sum over channels) to consider event tradable
+MIN_TRACTION_SCORE = 0.5
+
+NO_ATTENTION_REASON = (
+    "There isn't enough attention for this event yet, so it's not tradable."
+)
+
+
+def has_traction(activity: Optional[dict[str, float]]) -> bool:
+    """Return True if total activity meets the traction threshold (event is tradable)."""
+    if not activity:
+        return False
+    total = sum(activity.values())
+    return total >= MIN_TRACTION_SCORE
+
 
 def initial_reasonability_check(
     name: str,

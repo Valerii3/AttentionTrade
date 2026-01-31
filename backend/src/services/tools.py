@@ -16,7 +16,7 @@ TOOLS: list[Tool] = [
     {
         "id": "hn_frontpage",
         "name": "Hacker News",
-        "description": "Fetches Hacker News front page RSS; counts items matching keywords.",
+        "description": "Hacker News search (Algolia) over the event window; stories matching keywords, scored by count and engagement (points).",
     },
     {
         "id": "reddit",

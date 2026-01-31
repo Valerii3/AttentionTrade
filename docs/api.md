@@ -36,10 +36,15 @@ Base URL: `http://localhost:8000` (or set via env).
 - `sourceUrl` (optional): e.g. Reddit URL.
 - `description` (optional): short context if no URL.
 
-Backend runs: agent tool selection (Gemini when `GEMINI_API_KEY` set), real index build, then accept decision (Gemini). Event is stored as `proposed` during analysis, then set to `open` (accepted) or `rejected`.
+Backend runs: initial reasonability check (Gemini + Google Search when `GEMINI_API_KEY` set), agent tool selection, index build (e.g. Hacker News via Algolia), then traction gate and accept decision. Event is stored as `proposed` during analysis, then set to `open` (accepted) or `rejected`.
 
 **Response:** `201 Created`  
 Body: full **Event** object (see below). `status` is `open` (accepted, ready to trade), `rejected` (not accepted), or `proposed` (if returned before accept/reject).
+
+When `status` is `rejected`, the response includes **`rejectReason`** (string). Common cases:
+- **Initial reasonability check failed** — e.g. no or insufficient information about the event on the web.
+- **Insufficient attention (traction)** — total activity from selected channels (e.g. Hacker News) is below the traction threshold; the event is not tradable yet. Message is typically: *"There isn't enough attention for this event yet, so it's not tradable."*
+- **Accept decision (Gemini)** — agent decided not to accept for trading; reason is in `rejectReason`.
 
 ---
 
@@ -101,12 +106,14 @@ Body: single **Event** object.
   "resolution": "up" | "down" | null,
   "priceUp": 0.52,
   "priceDown": 0.48,
-  "createdAt": "ISO8601"
+  "createdAt": "ISO8601",
+  "rejectReason": "Optional; present when status is rejected."
 }
 ```
 
 - `priceUp` + `priceDown` are in [0, 1] and sum to 1.
 - `resolution` is set when status is `resolved`.
+- `rejectReason` is present when `status` is `rejected` (e.g. reasonability check failed, insufficient attention/traction, or accept decision).
 
 ---
 

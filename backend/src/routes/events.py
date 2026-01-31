@@ -89,9 +89,20 @@ async def propose_event(body: ProposeEventBody):
     logger.info("Propose event: name=%r, running reasonability check...", body.name.strip())
 
     try:
-        from agent.propose_agent import initial_reasonability_check, select_tools_and_config, should_accept_event
+        from agent.propose_agent import (
+            initial_reasonability_check,
+            select_tools_and_config,
+            should_accept_event,
+            has_traction,
+            NO_ATTENTION_REASON,
+        )
     except Exception:
-        from agent.propose_agent import select_tools_and_config, should_accept_event
+        from agent.propose_agent import (
+            select_tools_and_config,
+            should_accept_event,
+            has_traction,
+            NO_ATTENTION_REASON,
+        )
         initial_reasonability_check = None
 
     reasonability = None
@@ -158,6 +169,13 @@ async def propose_event(body: ProposeEventBody):
         config=config,
     )
     index_value, activity = await build_index(event_id, config)
+
+    if not has_traction(activity):
+        config["reject_reason"] = NO_ATTENTION_REASON
+        await db.update_event_on_reject(event_id, config)
+        event = await db.get_event(event_id)
+        return await _event_to_response_async(event)
+
     try:
         decision = should_accept_event(body.name, index_value, activity)
         accepted = decision.get("accept", True)
