@@ -10,7 +10,7 @@ from typing import Any, Callable, Optional
 import feedparser
 
 # Weights per channel (must sum to 1 for scaling)
-CHANNEL_WEIGHTS = {"Hacker News": 0.6, "Reddit": 0.4}
+CHANNEL_WEIGHTS = {"Hacker News": 0.35, "Reddit": 0.35, "GitHub": 0.15, "LinkedIn": 0.15}
 
 
 def fetch_hn_activity(keywords: list[str], exclusions: list[str]) -> float:
@@ -35,7 +35,16 @@ def fetch_hn_activity(keywords: list[str], exclusions: list[str]) -> float:
 
 def fetch_reddit_activity(keywords: list[str], exclusions: list[str]) -> float:
     """Placeholder: Reddit API often needs API key. Return 0 or mock for demo."""
-    # For hackathon we can use a simple placeholder; real impl would use Reddit API
+    return 0.0
+
+
+def fetch_github_activity(keywords: list[str], exclusions: list[str]) -> float:
+    """Placeholder: GitHub API; real impl TBD (repos, stars, etc.)."""
+    return 0.0
+
+
+def fetch_linkedin_activity(keywords: list[str], exclusions: list[str]) -> float:
+    """Placeholder: LinkedIn events/posts; real impl TBD."""
     return 0.0
 
 
@@ -44,6 +53,8 @@ def _get_tool_fetchers() -> dict[str, tuple[str, Callable[[list[str], list[str]]
     return {
         "hn_frontpage": ("Hacker News", fetch_hn_activity),
         "reddit": ("Reddit", fetch_reddit_activity),
+        "github": ("GitHub", fetch_github_activity),
+        "linkedin": ("LinkedIn", fetch_linkedin_activity),
     }
 
 
@@ -74,7 +85,12 @@ def _get_fetchers_for_config(config: dict) -> list[tuple[str, Callable[[list[str
     if tools:
         return [fetchers_map[tid] for tid in tools if tid in fetchers_map]
     channels = config.get("channels", ["Hacker News", "Reddit"])
-    name_to_fetcher = {"Hacker News": fetch_hn_activity, "Reddit": fetch_reddit_activity}
+    name_to_fetcher = {
+        "Hacker News": fetch_hn_activity,
+        "Reddit": fetch_reddit_activity,
+        "GitHub": fetch_github_activity,
+        "LinkedIn": fetch_linkedin_activity,
+    }
     return [(ch, name_to_fetcher[ch]) for ch in channels if ch in name_to_fetcher]
 
 

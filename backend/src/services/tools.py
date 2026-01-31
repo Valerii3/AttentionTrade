@@ -11,7 +11,7 @@ class Tool(TypedDict):
     description: str
 
 
-# Registry: id must match mapping in index_pipeline (TOOL_ID_TO_FETCHER)
+# Registry: id must match mapping in index_pipeline (_get_tool_fetchers)
 TOOLS: list[Tool] = [
     {
         "id": "hn_frontpage",
@@ -22,6 +22,16 @@ TOOLS: list[Tool] = [
         "id": "reddit",
         "name": "Reddit",
         "description": "Fetches Reddit subreddit or post (placeholder; real impl would use Reddit API).",
+    },
+    {
+        "id": "github",
+        "name": "GitHub",
+        "description": "Fetches GitHub repos/activity (placeholder; real impl TBD).",
+    },
+    {
+        "id": "linkedin",
+        "name": "LinkedIn",
+        "description": "Fetches LinkedIn events/posts (placeholder; real impl TBD).",
     },
 ]
 

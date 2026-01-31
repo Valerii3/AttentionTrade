@@ -41,6 +41,7 @@ def initial_reasonability_check(
 
     prompt = (
         "You check whether an event is suitable for an attention-trading market (tradable on attention). "
+        "Use the event name and description (if provided) to understand what the event is. "
         "Use Google Search to verify the event is real and discussed on the web. "
         "If you find no or insufficient information, the event is not tradable. "
         "Reply with ONLY a JSON object: {\"pass\": true or false, \"reason\": \"short explanation\"}. "
@@ -137,7 +138,7 @@ def _select_tools_fallback(
         keywords = list(set(words + [name_lower]))
         return {
             "event": name,
-            "channels": ["Hacker News", "Reddit"],
+            "channels": ["Hacker News", "Reddit", "GitHub", "LinkedIn"],
             "tools": DEFAULT_TOOL_IDS,
             "keywords": keywords[:10] if keywords else [name_lower],
             "exclusions": ["mouse cursor", "ui cursor", "cursor pointer"],
@@ -171,11 +172,15 @@ def _select_tools_gemini(
     user_content = " ".join(user_parts)
 
     full_prompt = (
-        "You are a config generator for an attention-tracking system. Given an event name and optional URL/description, "
-        "output ONLY a single JSON object with keys: tools (array of tool ids), keywords (array of strings), exclusions (array of strings). "
-        "Available tools: Reddit (id: reddit), Hacker News front page (id: hn_frontpage). "
-        "Choose which tools to use: e.g. use reddit when the event or source is Reddit-related; use hn_frontpage for tech/product news; use both if the event could appear on both. "
-        "No markdown, no explanation.\n\n"
+        "You are a config generator for an attention-tracking system. "
+        "Use the event name and description (if provided) to decide which tools to use. "
+        "Output ONLY a single JSON object with keys: tools (array of tool ids), keywords (array of strings), exclusions (array of strings). "
+        "Available tools: Reddit (id: reddit), Hacker News (id: hn_frontpage), GitHub (id: github), LinkedIn (id: linkedin). "
+        "Routing rules: "
+        "If it's a meme or similar casual/viral content, use reddit. "
+        "If it's technical (software, repos, dev tools), use hn_frontpage + reddit + github. "
+        "If it's an event (conference, meetup, professional event), use linkedin. "
+        "You can combine tools when the event fits multiple categories. No markdown, no explanation.\n\n"
         + user_content
     )
 
@@ -202,7 +207,7 @@ def _select_tools_gemini(
         out.setdefault("keywords", [name])
         out.setdefault("exclusions", [])
         out["event"] = name
-        out["channels"] = ["Hacker News", "Reddit"]
+        out["channels"] = ["Hacker News", "Reddit", "GitHub", "LinkedIn"]
         out["window_minutes"] = window_minutes
         out["source_url"] = source_url
         out["description"] = description
