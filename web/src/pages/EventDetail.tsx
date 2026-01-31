@@ -7,8 +7,17 @@ import {
   getExplanation,
   type Event,
   type IndexHistoryPoint,
-} from "../api-client/client";
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
+} from "@/api-client/client";
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+} from "recharts";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 const POLL_MS = 30000;
 
@@ -26,7 +35,10 @@ export default function EventDetail() {
   const load = async () => {
     if (!id) return;
     try {
-      const [e, h] = await Promise.all([getEvent(id), getIndexHistory(id)]);
+      const [e, h] = await Promise.all([
+        getEvent(id),
+        getIndexHistory(id),
+      ]);
       setEvent(e);
       setHistory(h.history);
       if (e.status === "resolved") {
@@ -61,8 +73,18 @@ export default function EventDetail() {
     }
   }
 
-  if (loading && !event) return <p>Loading…</p>;
-  if (!event) return <p>Event not found. <Link to="/">Back to list</Link>.</p>;
+  if (loading && !event)
+    return (
+      <div className="p-6 text-muted-foreground">Loading…</div>
+    );
+  if (!event)
+    return (
+      <div className="p-6">
+        <p className="text-muted-foreground">
+          Event not found. <Link to="/">Back to list</Link>.
+        </p>
+      </div>
+    );
 
   const chartData = history.map(({ t, index }) => ({
     time: new Date(t).toLocaleTimeString(),
@@ -70,102 +92,125 @@ export default function EventDetail() {
   }));
 
   return (
-    <div>
-      <div style={{ marginBottom: "1rem" }}>
-        <Link to="/">← Events</Link>
-      </div>
-      <h1 style={{ marginTop: 0 }}>{event.name}</h1>
-      <div style={{ color: "#71717a", marginBottom: "1rem" }}>
-        Status: <strong>{event.status}</strong> · Index: {event.indexCurrent.toFixed(1)} (start: {event.indexStart})
-        {event.status === "open" && (
-          <> · Up {(event.priceUp * 100).toFixed(0)}% / Down {(event.priceDown * 100).toFixed(0)}%</>
-        )}
-        {event.status === "resolved" && event.resolution && (
-          <> · Resolved: Attention {event.resolution === "up" ? "↑" : "↓"}</>
-        )}
-      </div>
-
-      {history.length > 0 && (
-        <div style={{ height: 240, marginBottom: "1.5rem", background: "#18181b", borderRadius: "8px", padding: "0.5rem" }}>
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={chartData}>
-              <XAxis dataKey="time" stroke="#71717a" fontSize={12} />
-              <YAxis stroke="#71717a" fontSize={12} domain={["auto", "auto"]} />
-              <Tooltip contentStyle={{ background: "#27272a", border: "1px solid #3f3f46" }} />
-              <Line type="monotone" dataKey="index" stroke="#a78bfa" strokeWidth={2} dot={false} />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-      )}
-
-      {event.status === "open" && (
-        <form onSubmit={handleTrade} style={{ marginBottom: "1.5rem" }}>
-          <h3 style={{ marginTop: 0 }}>Trade (demo credits)</h3>
-          <div style={{ display: "flex", gap: "1rem", alignItems: "center", flexWrap: "wrap" }}>
-            <label>
-              <input
-                type="radio"
-                name="side"
-                checked={tradeSide === "up"}
-                onChange={() => setTradeSide("up")}
-              />{" "}
-              Attention ↑
-            </label>
-            <label>
-              <input
-                type="radio"
-                name="side"
-                checked={tradeSide === "down"}
-                onChange={() => setTradeSide("down")}
-              />{" "}
-              Attention ↓
-            </label>
-            <input
-              type="number"
-              min={1}
-              value={tradeAmount}
-              onChange={(e) => setTradeAmount(Number(e.target.value) || 1)}
-              style={{
-                width: 80,
-                padding: "0.25rem 0.5rem",
-                background: "#27272a",
-                border: "1px solid #3f3f46",
-                color: "#e4e4e7",
-                borderRadius: "4px",
-              }}
-            />
-            <button
-              type="submit"
-              disabled={trading}
-              style={{
-                padding: "0.25rem 0.75rem",
-                background: "#7c3aed",
-                color: "#fff",
-                border: "none",
-                borderRadius: "4px",
-                cursor: trading ? "not-allowed" : "pointer",
-              }}
-            >
-              {trading ? "Trading…" : "Trade"}
-            </button>
-          </div>
-          {error && <p style={{ color: "#f87171", marginTop: "0.5rem" }}>{error}</p>}
-        </form>
-      )}
-
-      {event.status === "resolved" && explanation && (
-        <div
-          style={{
-            padding: "1rem",
-            background: "#18181b",
-            borderRadius: "8px",
-            border: "1px solid #27272a",
-          }}
+    <div className="p-4 md:p-6 max-w-3xl">
+      <div className="mb-6">
+        <Link
+          to="/"
+          className="text-sm text-muted-foreground hover:text-foreground"
         >
-          <h3 style={{ marginTop: 0 }}>Why attention moved</h3>
-          <p style={{ margin: 0, color: "#a1a1aa" }}>{explanation}</p>
+          ← Events
+        </Link>
+      </div>
+
+      <div className="bg-card rounded-lg border border-border p-6 relative">
+        <h1 className="text-xl font-semibold text-foreground pr-20">
+          {event.name}
+        </h1>
+        <div className="text-sm text-muted-foreground mt-2">
+          Status: <strong className="text-foreground">{event.status}</strong> ·
+          Index: {event.indexCurrent.toFixed(1)} (start: {event.indexStart})
+          {event.status === "open" && (
+            <>
+              {" "}
+              · Up {(event.priceUp * 100).toFixed(0)}% / Down{" "}
+              {(event.priceDown * 100).toFixed(0)}%
+            </>
+          )}
+          {event.status === "resolved" && event.resolution && (
+            <>
+              {" "}
+              · Resolved: Attention {event.resolution === "up" ? "↑" : "↓"}
+            </>
+          )}
         </div>
-      )}
+
+        {history.length > 0 && (
+          <div className="h-[240px] mt-6 rounded-lg border border-border bg-muted/30 p-4">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={chartData}>
+                <XAxis
+                  dataKey="time"
+                  stroke="var(--muted-foreground)"
+                  fontSize={12}
+                />
+                <YAxis
+                  stroke="var(--muted-foreground)"
+                  fontSize={12}
+                  domain={["auto", "auto"]}
+                />
+                <Tooltip
+                  contentStyle={{
+                    background: "var(--card)",
+                    border: "1px solid var(--border)",
+                    borderRadius: "var(--radius)",
+                  }}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="index"
+                  stroke="var(--primary)"
+                  strokeWidth={2}
+                  dot={false}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+
+        {event.status === "open" && (
+          <form onSubmit={handleTrade} className="mt-6">
+            <h3 className="text-sm font-medium text-foreground mb-3">
+              Trade (demo credits)
+            </h3>
+            <div className="flex flex-wrap items-center gap-4">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="radio"
+                  name="side"
+                  checked={tradeSide === "up"}
+                  onChange={() => setTradeSide("up")}
+                  className="accent-primary"
+                />
+                <span className="text-sm">Attention ↑</span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="radio"
+                  name="side"
+                  checked={tradeSide === "down"}
+                  onChange={() => setTradeSide("down")}
+                  className="accent-primary"
+                />
+                <span className="text-sm">Attention ↓</span>
+              </label>
+              <Input
+                type="number"
+                min={1}
+                value={tradeAmount}
+                onChange={(e) =>
+                  setTradeAmount(Number(e.target.value) || 1)
+                }
+                className="w-20"
+              />
+              <Button type="submit" disabled={trading}>
+                {trading ? "Trading…" : "Trade"}
+              </Button>
+            </div>
+            {error && (
+              <p className="text-sm text-destructive mt-2">{error}</p>
+            )}
+          </form>
+        )}
+
+        {event.status === "resolved" && explanation && (
+          <div className="mt-6 p-4 rounded-lg border border-border bg-muted/30">
+            <h3 className="text-sm font-medium text-foreground mb-2">
+              Why attention moved
+            </h3>
+            <p className="text-sm text-muted-foreground">{explanation}</p>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

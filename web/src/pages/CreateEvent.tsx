@@ -1,15 +1,8 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { proposeEvent } from "../api-client/client";
-
-const inputStyle = {
-  width: "100%",
-  padding: "0.5rem",
-  background: "#27272a",
-  border: "1px solid #3f3f46",
-  color: "#e4e4e7",
-  borderRadius: "4px",
-};
+import { proposeEvent } from "@/api-client/client";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 export default function CreateEvent() {
   const [name, setName] = useState("");
@@ -42,14 +35,22 @@ export default function CreateEvent() {
         setAcceptedEventId(event.id);
         setSuccessModal(true);
       } else if (event.status === "rejected") {
-        setRejectedMessage(event.rejectReason ?? "This event is not accepted for trading.");
+        setRejectedMessage(
+          event.rejectReason ??
+            "This event is not accepted for trading."
+        );
         setRejectionModal(true);
       } else {
-        setRejectedMessage(event.rejectReason ?? "This event is not accepted for trading.");
+        setRejectedMessage(
+          event.rejectReason ??
+            "This event is not accepted for trading."
+        );
         setRejectionModal(true);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to propose event");
+      setError(
+        err instanceof Error ? err.message : "Failed to propose event"
+      );
     } finally {
       setLoading(false);
     }
@@ -68,142 +69,104 @@ export default function CreateEvent() {
     setRejectedMessage(null);
   }
 
+  const modalBackdrop =
+    "fixed inset-0 bg-black/60 flex items-center justify-center z-50";
+  const modalPanel =
+    "bg-card border border-border rounded-lg p-6 max-w-[320px] shadow-lg";
+
   return (
-    <div>
+    <div className="p-4 md:p-6 max-w-lg">
+      <h1 className="text-xl font-semibold text-foreground mb-6">
+        Propose event
+      </h1>
+
       {successModal && (
         <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,0.6)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 10,
-          }}
+          className={modalBackdrop}
           onClick={closeSuccessModal}
+          role="dialog"
+          aria-modal="true"
         >
           <div
-            style={{
-              background: "#27272a",
-              padding: "1.5rem",
-              borderRadius: "8px",
-              border: "1px solid #3f3f46",
-              maxWidth: "320px",
-            }}
+            className={modalPanel}
             onClick={(e) => e.stopPropagation()}
           >
-            <p style={{ margin: "0 0 1rem 0", fontSize: "1rem" }}>Event successfully created.</p>
-            <button
-              type="button"
-              onClick={closeSuccessModal}
-              style={{
-                padding: "0.5rem 1rem",
-                background: "#7c3aed",
-                color: "#fff",
-                border: "none",
-                borderRadius: "4px",
-                cursor: "pointer",
-              }}
-            >
-              OK
-            </button>
+            <p className="text-foreground mb-4">
+              Event successfully created.
+            </p>
+            <Button onClick={closeSuccessModal}>OK</Button>
           </div>
         </div>
       )}
+
       {rejectionModal && (
         <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,0.6)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 10,
-          }}
+          className={modalBackdrop}
           onClick={closeRejectionModal}
+          role="dialog"
+          aria-modal="true"
         >
           <div
-            style={{
-              background: "#27272a",
-              padding: "1.5rem",
-              borderRadius: "8px",
-              border: "1px solid #3f3f46",
-              maxWidth: "320px",
-            }}
+            className={modalPanel}
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 style={{ margin: "0 0 0.75rem 0", fontSize: "1.1rem" }}>Event not tradable</h3>
-            <p style={{ margin: "0 0 1rem 0", fontSize: "1rem", color: "#e4e4e7" }}>
-              {rejectedMessage ?? "This event is not accepted for trading."}
+            <h3 className="text-lg font-medium text-foreground mb-2">
+              Event not tradable
+            </h3>
+            <p className="text-muted-foreground mb-4">
+              {rejectedMessage ??
+                "This event is not accepted for trading."}
             </p>
-            <button
-              type="button"
-              onClick={closeRejectionModal}
-              style={{
-                padding: "0.5rem 1rem",
-                background: "#7c3aed",
-                color: "#fff",
-                border: "none",
-                borderRadius: "4px",
-                cursor: "pointer",
-              }}
-            >
-              OK
-            </button>
+            <Button onClick={closeRejectionModal}>OK</Button>
           </div>
         </div>
       )}
-      <h1 style={{ marginTop: 0 }}>Propose event</h1>
-      <form onSubmit={handleSubmit} style={{ maxWidth: "400px" }}>
-        <div style={{ marginBottom: "1rem" }}>
-          <label style={{ display: "block", marginBottom: "0.25rem" }}>Event name</label>
-          <input
+
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div>
+          <label className="block text-sm font-medium text-foreground mb-1.5">
+            Event name
+          </label>
+          <Input
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="e.g. Cursor Hackathon Dec 24"
-            style={inputStyle}
+            className="w-full"
           />
         </div>
-        <div style={{ marginBottom: "1rem" }}>
-          <label style={{ display: "block", marginBottom: "0.25rem" }}>Source URL (optional)</label>
-          <input
+        <div>
+          <label className="block text-sm font-medium text-foreground mb-1.5">
+            Source URL (optional)
+          </label>
+          <Input
             type="url"
             value={sourceUrl}
             onChange={(e) => setSourceUrl(e.target.value)}
             placeholder="e.g. https://reddit.com/r/cursor/..."
-            style={inputStyle}
+            className="w-full"
           />
         </div>
-        <div style={{ marginBottom: "1rem" }}>
-          <label style={{ display: "block", marginBottom: "0.25rem" }}>Description (optional)</label>
+        <div>
+          <label className="block text-sm font-medium text-foreground mb-1.5">
+            Description (optional)
+          </label>
           <textarea
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             placeholder="Short context if no URL"
             rows={2}
-            style={inputStyle}
+            className="flex min-h-[60px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
           />
         </div>
         {error && (
-          <p style={{ color: "#f87171", marginBottom: "1rem" }}>{error}</p>
+          <p className="text-sm text-destructive">{error}</p>
         )}
-        <button
-          type="submit"
-          disabled={loading}
-          style={{
-            padding: "0.5rem 1rem",
-            background: "#7c3aed",
-            color: "#fff",
-            border: "none",
-            borderRadius: "4px",
-            cursor: loading ? "not-allowed" : "pointer",
-          }}
-        >
-          {loading ? "Proposing… Analyzing… Building index…" : "Propose"}
-        </button>
+        <Button type="submit" disabled={loading}>
+          {loading
+            ? "Proposing… Analyzing… Building index…"
+            : "Propose"}
+        </Button>
       </form>
     </div>
   );
