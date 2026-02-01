@@ -18,12 +18,26 @@ import { Button } from "@/components/ui/button";
 import { formatCanonicalQuestion } from "@/lib/utils";
 import { useProfile } from "@/contexts/profile-context";
 import { MarketHeader, MarketFilters } from "@/components/market/market-header";
-import { PriceChart } from "@/components/market/price-chart";
+import { PriceChart, TIME_FRAMES, type Timeframe } from "@/components/market/price-chart";
 import { TradingPanel } from "@/components/market/trading-panel";
 import { CollapsibleSection } from "@/components/market/collapsible-section";
 import { RulesSection } from "@/components/market/rules-section";
 
 const POLL_MS = 30000;
+
+function timeframeToInterval(tf: Timeframe): string | undefined {
+  if (tf === "all") return undefined;
+  return tf;
+}
+
+function formatChartTime(t: string, tf: Timeframe): string {
+  const d = new Date(t);
+  if (tf === "1h" || tf === "6h")
+    return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  if (tf === "1d" || tf === "1w" || tf === "1m")
+    return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return d.toLocaleTimeString();
+}
 
 const DEFAULT_RULES =
   "This market resolves to Up if the attention index at window end is above the start value, otherwise Down. Index is built from real-time attention signals (e.g. discussion volume).";
@@ -32,6 +46,7 @@ export default function EventDetail() {
   const { id } = useParams<{ id: string }>();
   const [event, setEvent] = useState<Event | null>(null);
   const [history, setHistory] = useState<IndexHistoryPoint[]>([]);
+  const [timeframe, setTimeframe] = useState<Timeframe>("1d");
   const [pastWindows, setPastWindows] = useState<Event[]>([]);
   const [explanation, setExplanation] = useState<string | null>(null);
   const [comments, setComments] = useState<EventComment[]>([]);
@@ -49,10 +64,11 @@ export default function EventDetail() {
 
   const load = async () => {
     if (!id) return;
+    const interval = timeframeToInterval(timeframe);
     try {
       const [e, h] = await Promise.all([
         getEvent(id),
-        getIndexHistory(id),
+        getIndexHistory(id, interval != null ? { interval } : undefined),
       ]);
       setEvent(e);
       setHistory(h.history);
@@ -86,7 +102,7 @@ export default function EventDetail() {
     load();
     const t = setInterval(load, POLL_MS);
     return () => clearInterval(t);
-  }, [id]);
+  }, [id, timeframe]);
 
   const { profile } = useProfile();
   const traderId = profile?.traderId;
@@ -182,7 +198,7 @@ export default function EventDetail() {
     );
 
   const chartData = history.map(({ t, index }) => ({
-    time: new Date(t).toLocaleTimeString(),
+    time: formatChartTime(t, timeframe),
     index,
   }));
 
@@ -228,6 +244,8 @@ export default function EventDetail() {
                 labelDown={event.labelDown}
                 volume={event.volume}
                 windowEnd={event.windowEnd}
+                timeframe={timeframe}
+                onTimeframeChange={setTimeframe}
               />
             )}
 

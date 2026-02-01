@@ -123,8 +123,14 @@ export async function getEvent(id: string): Promise<Event> {
   return res.json();
 }
 
-export async function getIndexHistory(id: string): Promise<{ history: IndexHistoryPoint[] }> {
-  const res = await fetch(`${BASE}/events/${id}/index-history`);
+export async function getIndexHistory(
+  id: string,
+  params?: { interval?: string }
+): Promise<{ history: IndexHistoryPoint[] }> {
+  const search = new URLSearchParams();
+  if (params?.interval) search.set("interval", params.interval);
+  const query = search.toString() ? `?${search}` : "";
+  const res = await fetch(`${BASE}/events/${id}/index-history${query}`);
   if (!res.ok) throw new Error(res.statusText);
   return res.json();
 }

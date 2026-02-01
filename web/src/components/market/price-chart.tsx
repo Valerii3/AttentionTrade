@@ -13,6 +13,9 @@ export interface ChartPoint {
   index: number;
 }
 
+export const TIME_FRAMES = ["1h", "6h", "1d", "1w", "1m", "all"] as const;
+export type Timeframe = (typeof TIME_FRAMES)[number];
+
 interface PriceChartProps {
   data: ChartPoint[];
   priceUp: number;
@@ -21,6 +24,8 @@ interface PriceChartProps {
   labelDown?: string | null;
   volume?: number;
   windowEnd?: string;
+  timeframe?: Timeframe;
+  onTimeframeChange?: (tf: Timeframe) => void;
 }
 
 export function PriceChart({
@@ -31,6 +36,8 @@ export function PriceChart({
   labelDown = "Cooling down",
   volume,
   windowEnd,
+  timeframe,
+  onTimeframeChange,
 }: PriceChartProps) {
   const upPct = (priceUp * 100).toFixed(0);
   const downPct = (priceDown * 100).toFixed(0);
@@ -110,16 +117,35 @@ export function PriceChart({
 
       <div className="flex items-center justify-between mt-4 text-sm text-muted-foreground">
         <span className="font-medium text-foreground">
-          {volume != null ? `Vol. ${volume}` : "Attention index"}
+          {volume != null ? `Vol. ${volume}$` : "Attention index"}
+          {windowEnd && (
+            <>
+              {" | "}
+              {new Date(windowEnd).toLocaleDateString(undefined, {
+                month: "short",
+                day: "numeric",
+                year: "numeric",
+              })}
+            </>
+          )}
         </span>
-        {windowEnd && (
-          <span>
-            {new Date(windowEnd).toLocaleDateString(undefined, {
-              month: "short",
-              day: "numeric",
-              year: "numeric",
-            })}
-          </span>
+        {onTimeframeChange && timeframe != null && (
+          <div className="flex items-center gap-2">
+            {TIME_FRAMES.map((tf) => (
+              <button
+                key={tf}
+                type="button"
+                onClick={() => onTimeframeChange(tf)}
+                className={`px-2 py-1 rounded transition-colors ${
+                  timeframe === tf
+                    ? "text-white font-medium"
+                    : "hover:text-foreground"
+                }`}
+              >
+                {tf}
+              </button>
+            ))}
+          </div>
         )}
       </div>
     </div>

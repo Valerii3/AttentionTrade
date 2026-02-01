@@ -12,6 +12,7 @@ from backend.src.constants import market_type_to_minutes
 from backend.src.db import queries as db
 from backend.src.services.trading import prices_from_position
 from backend.src.services.index_pipeline import get_iso_now, build_index
+from backend.src.services.index_history_aggregation import aggregate_history
 from backend.src.services.tools import get_available_tools
 
 router = APIRouter(prefix="/events", tags=["events"])
@@ -368,11 +369,19 @@ async def list_events(
 
 
 @router.get("/{event_id}/index-history")
-async def get_index_history(event_id: str):
+async def get_index_history(event_id: str, interval: Optional[str] = None):
     event = await db.get_event(event_id)
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
     history = await db.get_index_history(event_id)
+    interval_normalized = (interval or "").strip().lower()
+    if interval_normalized and interval_normalized not in ("raw", "all"):
+        if interval_normalized in ("1h", "6h", "1d", "1w", "1m"):
+            history = aggregate_history(
+                history,
+                interval_normalized,
+                window_start_iso=event.get("window_start"),
+            )
     return {"history": history}
 
 

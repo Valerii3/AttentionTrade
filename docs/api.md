@@ -133,6 +133,9 @@ Body: single **Event** object.
 
 ### GET /events/:id/index-history
 
+**Query (optional):**
+- `interval`: `1h` | `6h` | `1d` | `1w` | `1m` | `raw`. When omitted or `raw`/`all`, returns all raw snapshots. When `1h`, `6h`, `1d`, `1w`, or `1m`, returns one point per time bucket (last value in bucket).
+
 **Response:** `200 OK`  
 Body:
 ```json
