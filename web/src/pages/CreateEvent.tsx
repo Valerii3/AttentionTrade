@@ -1,10 +1,14 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { proposeEvent } from "@/api-client/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
-export default function CreateEvent() {
+export interface CreateEventFormProps {
+  onClose: () => void;
+  onSuccess: (eventId?: string) => void;
+}
+
+export function CreateEventForm({ onClose, onSuccess }: CreateEventFormProps) {
   const [name, setName] = useState("");
   const [sourceUrl, setSourceUrl] = useState("");
   const [description, setDescription] = useState("");
@@ -17,8 +21,6 @@ export default function CreateEvent() {
   const [acceptedEventId, setAcceptedEventId] = useState<string | null>(null);
   const [rejectionModal, setRejectionModal] = useState(false);
   const [rejectedMessage, setRejectedMessage] = useState<string | null>(null);
-
-  const navigate = useNavigate();
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -64,7 +66,7 @@ export default function CreateEvent() {
   function closeSuccessModal() {
     setSuccessModal(false);
     if (acceptedEventId) {
-      navigate(`/events/${acceptedEventId}`);
+      onSuccess(acceptedEventId);
       setAcceptedEventId(null);
     }
   }
@@ -75,16 +77,12 @@ export default function CreateEvent() {
   }
 
   const modalBackdrop =
-    "fixed inset-0 bg-black/60 flex items-center justify-center z-50";
+    "fixed inset-0 bg-black/60 flex items-center justify-center z-[60]";
   const modalPanel =
     "bg-card border border-border rounded-lg p-6 max-w-[320px] shadow-lg";
 
   return (
-    <div className="p-4 md:p-6 max-w-lg">
-      <h1 className="text-xl font-semibold text-foreground mb-6">
-        Propose event
-      </h1>
-
+    <>
       {successModal && (
         <div
           className={modalBackdrop}
@@ -127,102 +125,123 @@ export default function CreateEvent() {
         </div>
       )}
 
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div>
-          <label className="block text-sm font-medium text-foreground mb-1.5">
-            Topic or event
-          </label>
-          <p className="text-xs text-muted-foreground mb-1.5">
-            The market will ask: Will attention around this increase in the next 60 minutes?
-          </p>
-          <Input
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. Cursor Hackathon Dec 24"
-            className="w-full"
-          />
+      <div className="bg-card border border-border rounded-lg p-6 max-w-lg w-full max-h-[90vh] overflow-y-auto shadow-lg">
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="text-xl font-semibold text-foreground">
+            Propose event
+          </h2>
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-muted-foreground hover:text-foreground text-2xl leading-none"
+            aria-label="Close"
+          >
+            ×
+          </button>
         </div>
-        <div>
-          <label className="block text-sm font-medium text-foreground mb-1.5">
-            Source URL (optional)
-          </label>
-          <Input
-            type="url"
-            value={sourceUrl}
-            onChange={(e) => setSourceUrl(e.target.value)}
-            placeholder="e.g. https://reddit.com/r/cursor/..."
-            className="w-full"
-          />
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-foreground mb-1.5">
-            Description (optional)
-          </label>
-          <textarea
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            placeholder="Short context if no URL"
-            rows={2}
-            className="flex min-h-[60px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-          />
-        </div>
-        {showAdvanced && (
-          <div className="space-y-2">
-            <label className="block text-sm font-medium text-foreground">
-              Market type
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-foreground mb-1.5">
+              Topic or event
             </label>
-            <div className="flex flex-col gap-2">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="radio"
-                  name="marketType"
-                  checked={marketType === "1h"}
-                  onChange={() => setMarketType("1h")}
-                  className="accent-primary"
-                />
-                <span className="text-sm">1h — Will attention increase in the next 60 minutes?</span>
-              </label>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="radio"
-                  name="marketType"
-                  checked={marketType === "24h"}
-                  onChange={() => setMarketType("24h")}
-                  className="accent-primary"
-                />
-                <span className="text-sm">24h — Will attention remain elevated over the next 24h?</span>
-              </label>
-            </div>
+            <p className="text-xs text-muted-foreground mb-1.5">
+              The market will ask: Will attention around this increase in the next 60 minutes?
+            </p>
+            <Input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. Cursor Hackathon Dec 24"
+              className="w-full"
+            />
           </div>
-        )}
-        <label className="flex items-center gap-2 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={demo}
-            onChange={(e) => setDemo(e.target.checked)}
-            className="accent-primary rounded"
-          />
-          <span className="text-sm text-muted-foreground">
-            Create demo market (2-min window, accelerated attention dynamics)
-          </span>
-        </label>
-        <button
-          type="button"
-          onClick={() => setShowAdvanced(!showAdvanced)}
-          className="text-sm text-muted-foreground hover:text-foreground"
-        >
-          {showAdvanced ? "Hide" : "Show"} advanced (24h market)
-        </button>
-        {error && (
-          <p className="text-sm text-destructive">{error}</p>
-        )}
-        <Button type="submit" disabled={loading}>
-          {loading
-            ? "Proposing… Analyzing… Building index…"
-            : "Propose"}
-        </Button>
-      </form>
-    </div>
+          <div>
+            <label className="block text-sm font-medium text-foreground mb-1.5">
+              Source URL (optional)
+            </label>
+            <Input
+              type="url"
+              value={sourceUrl}
+              onChange={(e) => setSourceUrl(e.target.value)}
+              placeholder="e.g. https://reddit.com/r/cursor/..."
+              className="w-full"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-foreground mb-1.5">
+              Description (optional)
+            </label>
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Short context if no URL"
+              rows={2}
+              className="flex min-h-[60px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+            />
+          </div>
+          {showAdvanced && (
+            <div className="space-y-2">
+              <label className="block text-sm font-medium text-foreground">
+                Market type
+              </label>
+              <div className="flex flex-col gap-2">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="marketType"
+                    checked={marketType === "1h"}
+                    onChange={() => setMarketType("1h")}
+                    className="accent-primary"
+                  />
+                  <span className="text-sm">1h — Will attention increase in the next 60 minutes?</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="marketType"
+                    checked={marketType === "24h"}
+                    onChange={() => setMarketType("24h")}
+                    className="accent-primary"
+                  />
+                  <span className="text-sm">24h — Will attention remain elevated over the next 24h?</span>
+                </label>
+              </div>
+            </div>
+          )}
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={demo}
+              onChange={(e) => setDemo(e.target.checked)}
+              className="accent-primary rounded"
+            />
+            <span className="text-sm text-muted-foreground">
+              Create demo market (2-min window, accelerated attention dynamics)
+            </span>
+          </label>
+          <button
+            type="button"
+            onClick={() => setShowAdvanced(!showAdvanced)}
+            className="text-sm text-muted-foreground hover:text-foreground"
+          >
+            {showAdvanced ? "Hide" : "Show"} advanced (24h market)
+          </button>
+          {error && (
+            <p className="text-sm text-destructive">{error}</p>
+          )}
+          <div className="flex gap-2 pt-2">
+            <Button type="button" variant="outline" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={loading}>
+              {loading
+                ? "Proposing… Analyzing… Building index…"
+                : "Propose"}
+            </Button>
+          </div>
+        </form>
+      </div>
+    </>
   );
 }

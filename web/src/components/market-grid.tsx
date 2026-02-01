@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { listEvents, type Event } from "@/api-client/client";
 import {
   AttentionEventCard,
@@ -29,6 +30,7 @@ function eventToCard(e: Event): AttentionEventCardData {
     subline: e.subline ?? undefined,
     labelUp: e.labelUp ?? undefined,
     labelDown: e.labelDown ?? undefined,
+    imageUrl: e.imageUrl ?? undefined,
   };
 }
 
@@ -38,6 +40,8 @@ interface MarketGridProps {
 }
 
 export function MarketGrid({ selectedCategory, selectedFilter }: MarketGridProps) {
+  const [searchParams] = useSearchParams();
+  const q = searchParams.get("q")?.trim() ?? "";
   const [events, setEvents] = useState<Event[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -57,7 +61,10 @@ export function MarketGrid({ selectedCategory, selectedFilter }: MarketGridProps
             : selectedFilter === "Resolved"
               ? "resolved"
               : undefined;
-        const { events: list } = await listEvents(status !== undefined ? { status } : {});
+        const params: { status?: "open" | "resolved"; q?: string } =
+          status !== undefined ? { status } : {};
+        if (q) params.q = q;
+        const { events: list } = await listEvents(params);
         if (!cancelled) setEvents(list);
       } catch {
         if (!cancelled) setEvents([]);
@@ -69,7 +76,7 @@ export function MarketGrid({ selectedCategory, selectedFilter }: MarketGridProps
     return () => {
       cancelled = true;
     };
-  }, [selectedCategory, selectedFilter]);
+  }, [selectedCategory, selectedFilter, q]);
 
   if (selectedCategory !== "hackathon") {
     return (

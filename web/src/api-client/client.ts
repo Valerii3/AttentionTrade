@@ -29,6 +29,8 @@ export interface Event {
   labelUp?: string | null;
   /** Button label for down side (e.g. "Cooling down"). */
   labelDown?: string | null;
+  /** Optional thumbnail/image URL for event card. */
+  imageUrl?: string | null;
   /** Present when status is "rejected". */
   rejectReason?: string;
 }
@@ -99,15 +101,18 @@ export async function suggestWindowMinutes(params: {
 export async function listEvents(params?: {
   status?: "open" | "resolved";
   name?: string;
+  q?: string;
 }): Promise<{ events: Event[] }> {
   const search = new URLSearchParams();
   if (params?.status) search.set("status", params.status);
   if (params?.name?.trim()) search.set("name", params.name.trim());
-  const q = search.toString() ? `?${search}` : "";
-  const res = await fetch(`${BASE}/events${q}`);
+  if (params?.q?.trim()) search.set("q", params.q.trim());
+  const query = search.toString() ? `?${search}` : "";
+  const res = await fetch(`${BASE}/events${query}`);
   if (!res.ok) throw new Error(res.statusText);
   return res.json();
 }
+
 
 export async function getEvent(id: string): Promise<Event> {
   const res = await fetch(`${BASE}/events/${id}`);
@@ -159,5 +164,38 @@ export async function getExplanation(
 ): Promise<{ explanation: string | null }> {
   const res = await fetch(`${BASE}/events/${eventId}/explanation`);
   if (!res.ok) throw new Error(res.statusText);
+  return res.json();
+}
+
+export interface EventComment {
+  id: number;
+  eventId: string;
+  traderId?: string | null;
+  displayName?: string | null;
+  body: string;
+  createdAt: string;
+}
+
+export async function getEventComments(
+  eventId: string
+): Promise<{ comments: EventComment[] }> {
+  const res = await fetch(`${BASE}/events/${eventId}/comments`);
+  if (!res.ok) throw new Error(res.statusText);
+  return res.json();
+}
+
+export async function postComment(
+  eventId: string,
+  body: { text: string; traderId?: string; displayName?: string }
+): Promise<EventComment> {
+  const res = await fetch(`${BASE}/events/${eventId}/comments`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    throw new Error(d.detail || res.statusText);
+  }
   return res.json();
 }

@@ -7,3 +7,4 @@ pydantic-settings==2.1.0
 httpx==0.26.0
 feedparser==6.0.11
 google-genai>=1.0.0
+Pillow>=10.0.0

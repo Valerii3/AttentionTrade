@@ -13,6 +13,8 @@ Base URL: `http://localhost:8000` (or set via env).
 | GET | `/events` | List events (optional query: `?status=open` or `?status=resolved`) |
 | GET | `/events/:id` | Event detail + current index, window, resolution, prices |
 | GET | `/events/:id/index-history` | Time series for chart |
+| GET | `/events/:id/comments` | List comments for event (newest first) |
+| POST | `/events/:id/comments` | Post a comment (body: `text`, optional `traderId`, `displayName`) |
 | POST | `/events/:id/trade` | Submit belief (side + amount; optional `trader_id`); demo credits only |
 | GET | `/events/:id/explanation` | Short text "why index moved" (after resolution) |
 | GET | `/profile/trades` | List trades for a trader (query: `?trader_id=xxx`) |
@@ -81,6 +83,7 @@ Body:
 **Query params (optional):**
 - `status`: `open` | `resolved` — filter by status.
 - `name`: filter by topic name (e.g. for resolution history per topic).
+- `q`: search string; events whose name contains `q` (case-insensitive substring).
 
 **Response:** `200 OK`  
 Body:
@@ -140,6 +143,49 @@ Body:
   ]
 }
 ```
+
+---
+
+### GET /events/:id/comments
+
+**Response:** `200 OK`  
+Body: list of comments, **newest first**.
+```json
+{
+  "comments": [
+    {
+      "id": 1,
+      "eventId": "uuid",
+      "traderId": "optional",
+      "displayName": "optional",
+      "body": "Comment text",
+      "createdAt": "ISO8601"
+    }
+  ]
+}
+```
+
+---
+
+### POST /events/:id/comments
+
+Allowed only when event status is `open` or `resolved`.
+
+**Request body:**
+```json
+{
+  "text": "Comment text",
+  "traderId": "optional",
+  "displayName": "optional"
+}
+```
+
+- `text` (required): comment body.
+- `traderId` (optional): from profile.
+- `displayName` (optional): for display; if omitted, show as "Anonymous".
+
+**Response:** `200 OK`  
+Body: the created **Comment** object (same shape as in GET comments).
 
 ---
 

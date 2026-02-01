@@ -33,6 +33,20 @@ async def init_db():
                 )
         await conn.commit()
 
+        # Migration: add trader_id / display_name to event_comments if missing
+        cursor = await conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='event_comments'"
+        )
+        has_comments = (await cursor.fetchone()) is not None
+        if has_comments:
+            cursor = await conn.execute("PRAGMA table_info(event_comments)")
+            columns = [row[1] for row in await cursor.fetchall()]
+            if "trader_id" not in columns:
+                await conn.execute("ALTER TABLE event_comments ADD COLUMN trader_id TEXT")
+            if "display_name" not in columns:
+                await conn.execute("ALTER TABLE event_comments ADD COLUMN display_name TEXT")
+        await conn.commit()
+
         with open(SCHEMA_PATH) as f:
             schema = f.read()
         await conn.executescript(schema)
@@ -85,28 +99,30 @@ async def get_event(event_id: str) -> Optional[dict]:
     return r
 
 
-async def list_events(status: Optional[str] = None, name: Optional[str] = None) -> list[dict]:
+async def list_events(
+    status: Optional[str] = None,
+    name: Optional[str] = None,
+    q: Optional[str] = None,
+) -> list[dict]:
     conn = await get_db()
     try:
-        if status and name:
-            cursor = await conn.execute(
-                "SELECT * FROM events WHERE status = ? AND name = ? ORDER BY created_at DESC",
-                (status, name),
-            )
-        elif status:
-            cursor = await conn.execute(
-                "SELECT * FROM events WHERE status = ? ORDER BY created_at DESC",
-                (status,),
-            )
-        elif name:
-            cursor = await conn.execute(
-                "SELECT * FROM events WHERE name = ? ORDER BY created_at DESC",
-                (name,),
-            )
-        else:
-            cursor = await conn.execute(
-                "SELECT * FROM events ORDER BY created_at DESC"
-            )
+        search_term = q.strip() if q else None
+        conditions = []
+        params = []
+        if status:
+            conditions.append("status = ?")
+            params.append(status)
+        if name:
+            conditions.append("name = ?")
+            params.append(name)
+        if search_term:
+            conditions.append("LOWER(name) LIKE '%' || LOWER(?) || '%'")
+            params.append(search_term)
+        where = " AND ".join(conditions) if conditions else "1=1"
+        cursor = await conn.execute(
+            f"SELECT * FROM events WHERE {where} ORDER BY created_at DESC",
+            tuple(params),
+        )
         rows = await cursor.fetchall()
     finally:
         await conn.close()
@@ -117,6 +133,58 @@ async def list_events(status: Optional[str] = None, name: Optional[str] = None) 
             r["config"] = json.loads(r["config"])
         out.append(r)
     return out
+
+
+async def list_comments(event_id: str) -> list[dict]:
+    """Return comments for an event, newest first."""
+    conn = await get_db()
+    try:
+        cursor = await conn.execute(
+            """
+            SELECT id, event_id, trader_id, display_name, body, created_at
+            FROM event_comments
+            WHERE event_id = ?
+            ORDER BY created_at DESC
+            """,
+            (event_id,),
+        )
+        rows = await cursor.fetchall()
+    finally:
+        await conn.close()
+    columns = ["id", "event_id", "trader_id", "display_name", "body", "created_at"]
+    return [dict(zip(columns, row)) for row in rows]
+
+
+async def add_comment(
+    event_id: str,
+    body: str,
+    trader_id: Optional[str] = None,
+    display_name: Optional[str] = None,
+) -> dict:
+    """Insert a comment and return the created row."""
+    conn = await get_db()
+    try:
+        cursor = await conn.execute(
+            """
+            INSERT INTO event_comments (event_id, trader_id, display_name, body)
+            VALUES (?, ?, ?, ?)
+            """,
+            (event_id, trader_id, display_name or None, body),
+        )
+        await conn.commit()
+        row_id = cursor.lastrowid
+        cursor = await conn.execute(
+            """
+            SELECT id, event_id, trader_id, display_name, body, created_at
+            FROM event_comments WHERE id = ?
+            """,
+            (row_id,),
+        )
+        row = await cursor.fetchone()
+    finally:
+        await conn.close()
+    columns = ["id", "event_id", "trader_id", "display_name", "body", "created_at"]
+    return dict(zip(columns, row))
 
 
 async def update_event_index(event_id: str, index_current: float) -> None:

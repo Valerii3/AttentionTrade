@@ -389,3 +389,53 @@ def _headline_subline_default(name: str, market_type: str) -> dict[str, Any]:
         "label_up": "Heating up",
         "label_down": "Cooling down",
     }
+
+
+def generate_event_image(
+    name: str,
+    headline: str,
+    event_id: str,
+    output_dir: str,
+) -> Optional[str]:
+    """
+    Generate a square thumbnail image for the event using Gemini image generation.
+    Saves to output_dir/{event_id}.png. Returns the file path on success, None on failure.
+    """
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        return None
+    try:
+        from google import genai
+        client = genai.Client(api_key=api_key)
+    except ImportError:
+        return None
+
+    prompt = (
+        f"Create a small square thumbnail image for a prediction market event card. "
+        f"Theme: {name}. Headline/topic: {headline}. "
+        "Style: iconic, clean, suitable for a card thumbnail (square crop). "
+        "Muted colors with one accent. No text or words in the image. "
+        "Simple, recognizable scene or symbol that represents the topic."
+    )
+    try:
+        response = client.models.generate_content(
+            model="gemini-2.5-flash-image",
+            contents=[prompt],
+        )
+        parts = getattr(response, "parts", None) or (
+            response.candidates[0].content.parts
+            if response.candidates and response.candidates[0].content.parts
+            else []
+        )
+        for part in parts:
+            if getattr(part, "inline_data", None) is not None:
+                img = getattr(part, "as_image", lambda: None)()
+                if img is not None and callable(getattr(img, "save", None)):
+                    os.makedirs(output_dir, exist_ok=True)
+                    path = os.path.join(output_dir, f"{event_id}.png")
+                    img.save(path)
+                    return path
+        return None
+    except Exception as e:
+        logger.warning("Gemini image generation failed: %s", e)
+        return None

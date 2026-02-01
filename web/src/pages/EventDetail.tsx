@@ -6,8 +6,11 @@ import {
   listEvents,
   trade,
   getExplanation,
+  getEventComments,
+  postComment,
   type Event,
   type IndexHistoryPoint,
+  type EventComment,
 } from "@/api-client/client";
 import {
   LineChart,
@@ -30,6 +33,9 @@ export default function EventDetail() {
   const [history, setHistory] = useState<IndexHistoryPoint[]>([]);
   const [pastWindows, setPastWindows] = useState<Event[]>([]);
   const [explanation, setExplanation] = useState<string | null>(null);
+  const [comments, setComments] = useState<EventComment[]>([]);
+  const [commentText, setCommentText] = useState("");
+  const [commentSubmitting, setCommentSubmitting] = useState(false);
   const [loading, setLoading] = useState(true);
   const [tradeSide, setTradeSide] = useState<"up" | "down">("up");
   const [tradeAmount, setTradeAmount] = useState(10);
@@ -49,6 +55,8 @@ export default function EventDetail() {
         const ex = await getExplanation(id);
         setExplanation(ex.explanation);
       }
+      const { comments: commentList } = await getEventComments(id);
+      setComments(commentList);
       // Past windows for this topic (resolved, same name; exclude current id)
       const { events: resolvedSameTopic } = await listEvents({
         status: "resolved",
@@ -78,6 +86,25 @@ export default function EventDetail() {
 
   const { profile } = useProfile();
   const traderId = profile?.traderId;
+  const displayName = profile?.displayName;
+
+  async function handleCommentSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!id || !commentText.trim()) return;
+    setCommentSubmitting(true);
+    try {
+      await postComment(id, {
+        text: commentText.trim(),
+        traderId,
+        displayName: displayName || undefined,
+      });
+      setCommentText("");
+      const { comments: commentList } = await getEventComments(id);
+      setComments(commentList);
+    } finally {
+      setCommentSubmitting(false);
+    }
+  }
 
   async function handleTrade(e: React.FormEvent) {
     e.preventDefault();
@@ -124,12 +151,21 @@ export default function EventDetail() {
       </div>
 
       <div className="bg-card rounded-lg border border-border p-6 relative">
-        <h1 className="text-xl font-semibold text-foreground pr-20">
-          {event.headline ?? formatCanonicalQuestion(event.name, event.marketType ?? "1h")}
-        </h1>
-        {event.subline && (
-          <p className="text-sm text-muted-foreground mt-0.5">{event.subline}</p>
-        )}
+        <div className="flex gap-4 mb-2">
+          <img
+            src={event.imageUrl || "/event-thumbnail-placeholder.png"}
+            alt=""
+            className="w-16 h-16 rounded-lg object-cover shrink-0 bg-muted"
+          />
+          <div className="min-w-0 flex-1">
+            <h1 className="text-xl font-semibold text-foreground">
+              {event.headline ?? formatCanonicalQuestion(event.name, event.marketType ?? "1h")}
+            </h1>
+            {event.subline && (
+              <p className="text-sm text-muted-foreground mt-0.5">{event.subline}</p>
+            )}
+          </div>
+        </div>
         {event.demo && (
           <p className="text-xs text-muted-foreground mt-1">
             Demo: accelerated attention dynamics.
@@ -264,6 +300,46 @@ export default function EventDetail() {
             </div>
           </div>
         )}
+
+        <div className="mt-6 p-4 rounded-lg border border-border bg-muted/30">
+          <h3 className="text-sm font-medium text-foreground mb-3">
+            Comments
+          </h3>
+          <form onSubmit={handleCommentSubmit} className="mb-4">
+            <textarea
+              value={commentText}
+              onChange={(e) => setCommentText(e.target.value)}
+              placeholder="Add a comment…"
+              rows={2}
+              className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring mb-2"
+            />
+            <Button type="submit" disabled={commentSubmitting || !commentText.trim()}>
+              {commentSubmitting ? "Posting…" : "Post"}
+            </Button>
+          </form>
+          <div className="space-y-3">
+            {comments.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No comments yet.</p>
+            ) : (
+              comments.map((c) => (
+                <div
+                  key={c.id}
+                  className="text-sm border-b border-border pb-3 last:border-0 last:pb-0"
+                >
+                  <div className="flex items-center gap-2 text-muted-foreground mb-0.5">
+                    <span className="font-medium text-foreground">
+                      {c.displayName || "Anonymous"}
+                    </span>
+                    <span className="text-xs">
+                      {new Date(c.createdAt).toLocaleString()}
+                    </span>
+                  </div>
+                  <p className="text-foreground whitespace-pre-wrap">{c.body}</p>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );

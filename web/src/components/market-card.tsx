@@ -23,16 +23,21 @@ export interface AttentionEventCardData {
   labelUp?: string;
   /** Button label for down (e.g. "Cooling down"). */
   labelDown?: string;
+  /** Optional thumbnail URL for top-left of card. */
+  imageUrl?: string | null;
 }
 
 interface AttentionEventCardProps {
   market: AttentionEventCardData;
 }
 
+const DEFAULT_THUMBNAIL = "/event-thumbnail-placeholder.png";
+
 export function AttentionEventCard({ market }: AttentionEventCardProps) {
   const upPct = Math.round(market.priceUp * 100);
   const downPct = Math.round(market.priceDown * 100);
   const isOpen = market.status === "open";
+  const thumbnailUrl = market.imageUrl || DEFAULT_THUMBNAIL;
   const content = (
     <div className="bg-card rounded-lg border border-border p-4 hover:border-muted-foreground/50 transition-colors relative h-full flex flex-col">
       {(market.isDemo || market.demo) && (
@@ -40,13 +45,22 @@ export function AttentionEventCard({ market }: AttentionEventCardProps) {
           Demo
         </span>
       )}
-      <h3 className="text-sm font-medium text-foreground leading-tight flex-1 pr-16">
-        {market.headline ?? (market.marketType ? formatCanonicalQuestion(market.name, market.marketType) : market.name)}
-      </h3>
-      {market.subline && (
-        <p className="text-xs text-muted-foreground mt-0.5">{market.subline}</p>
-      )}
-      <div className="space-y-2 mt-4">
+      <div className="flex gap-3 mb-2">
+        <img
+          src={thumbnailUrl}
+          alt=""
+          className="w-14 h-14 rounded-lg object-cover shrink-0 bg-muted"
+        />
+        <div className="min-w-0 flex-1">
+          <h3 className="text-sm font-medium text-foreground leading-tight pr-8">
+            {market.headline ?? (market.marketType ? formatCanonicalQuestion(market.name, market.marketType) : market.name)}
+          </h3>
+          {market.subline && (
+            <p className="text-xs text-muted-foreground mt-0.5">{market.subline}</p>
+          )}
+        </div>
+      </div>
+      <div className="space-y-2 mt-2">
         <div className="flex items-center justify-between">
           <span className="text-sm text-muted-foreground">{market.labelUp ?? "Heating up"}</span>
           <span className="text-sm font-medium text-foreground">{upPct}%</span>

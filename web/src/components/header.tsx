@@ -1,9 +1,30 @@
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { Search, HelpCircle, Menu } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
-export function Header() {
+export interface HeaderProps {
+  onOpenCreateEvent?: () => void;
+}
+
+export function Header(props: HeaderProps) {
+  const { onOpenCreateEvent } = props;
+  const [searchParams, setSearchParams] = useSearchParams();
+  const q = searchParams.get("q") ?? "";
+
+  function handleSearchChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const value = e.target.value;
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        if (value.trim()) next.set("q", value);
+        else next.delete("q");
+        return next;
+      },
+      { replace: true }
+    );
+  }
+
   return (
     <header className="sticky top-0 z-50 border-b border-border bg-background">
       <div className="flex items-center justify-between px-4 py-3">
@@ -24,6 +45,8 @@ export function Header() {
             <Input
               type="search"
               placeholder="Search markets"
+              value={q}
+              onChange={handleSearchChange}
               className="w-full pl-10 pr-12 bg-secondary border-border text-foreground placeholder:text-muted-foreground"
             />
             <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground border border-border px-1.5 py-0.5 rounded">
@@ -45,11 +68,12 @@ export function Header() {
               Profile
             </Button>
           </Link>
-          <Link to="/create">
-            <Button className="bg-primary text-primary-foreground hover:bg-primary/90">
-              Create event
-            </Button>
-          </Link>
+          <Button
+            className="bg-primary text-primary-foreground hover:bg-primary/90"
+            onClick={() => onOpenCreateEvent?.()}
+          >
+            Create event
+          </Button>
           <Button variant="ghost" size="icon" className="text-foreground">
             <Menu className="h-5 w-5" />
           </Button>

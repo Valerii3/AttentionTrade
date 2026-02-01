@@ -1,9 +1,11 @@
 import logging
+import os
 import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from backend.src.constants import market_type_to_minutes
@@ -17,6 +19,10 @@ logger = logging.getLogger(__name__)
 
 # Canonical default: 1h market
 DEFAULT_MARKET_TYPE = "1h"
+
+# Directory for generated event thumbnails (project root / event_images)
+_project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+EVENT_IMAGES_DIR = os.environ.get("ATTENTION_EVENT_IMAGES", os.path.join(_project_root, "event_images"))
 
 
 class ProposeEventBody(BaseModel):
@@ -38,6 +44,12 @@ class TradeBody(BaseModel):
     side: str  # "up" | "down"
     amount: float
     trader_id: Optional[str] = None
+
+
+class CommentBody(BaseModel):
+    text: str
+    traderId: Optional[str] = None
+    displayName: Optional[str] = None
 
 
 def _event_to_response(e: dict) -> dict:
@@ -87,6 +99,7 @@ async def _event_to_response_async(e: dict) -> dict:
         "subline": config.get("subline"),
         "labelUp": config.get("label_up"),
         "labelDown": config.get("label_down"),
+        "imageUrl": config.get("image_url") or config.get("thumbnail_url"),
     }
     if e.get("status") == "rejected" and isinstance(config, dict):
         out["rejectReason"] = config.get("reject_reason") or "Event not accepted for trading."
@@ -252,8 +265,19 @@ async def propose_event(body: ProposeEventBody):
         config=config,
     )
 
+    def _maybe_generate_image():
+        try:
+            from agent.propose_agent import generate_event_image
+            headline = config.get("headline") or body.name
+            path = generate_event_image(body.name, headline, event_id, EVENT_IMAGES_DIR)
+            if path:
+                config["image_url"] = "/api/events/" + event_id + "/image"
+        except Exception as e:
+            logger.warning("Event image generation skipped: %s", e)
+
     if body.demo:
         # Demo: skip real index build and traction; accept immediately; tick_demo_index will drive synthetic index
+        _maybe_generate_image()
         await db.add_index_snapshot(event_id, get_iso_now(), 100.0)
         await db.update_event_on_accept(
             event_id,
@@ -278,6 +302,7 @@ async def propose_event(body: ProposeEventBody):
         except Exception:
             accepted = True
         if accepted:
+            _maybe_generate_image()
             await db.update_event_on_accept(
                 event_id,
                 window_start_str,
@@ -322,23 +347,24 @@ async def suggest_window(body: SuggestWindowBody):
 
 
 @router.get("")
-async def list_events(status: Optional[str] = None, name: Optional[str] = None):
+async def list_events(
+    status: Optional[str] = None,
+    name: Optional[str] = None,
+    q: Optional[str] = None,
+):
     # Default to open so main page shows only tradeable events
     effective_status = status if status is not None else "open"
     topic_name = name.strip() if name else None
-    events = await db.list_events(status=effective_status, name=topic_name)
+    search_q = q.strip() if q else None
+    events = await db.list_events(
+        status=effective_status,
+        name=topic_name,
+        q=search_q,
+    )
     out = []
     for e in events:
         out.append(await _event_to_response_async(e))
     return {"events": out}
-
-
-@router.get("/{event_id}")
-async def get_event(event_id: str):
-    event = await db.get_event(event_id)
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
-    return await _event_to_response_async(event)
 
 
 @router.get("/{event_id}/index-history")
@@ -348,6 +374,44 @@ async def get_index_history(event_id: str):
         raise HTTPException(status_code=404, detail="Event not found")
     history = await db.get_index_history(event_id)
     return {"history": history}
+
+
+def _comment_to_response(c: dict) -> dict:
+    return {
+        "id": c["id"],
+        "eventId": c["event_id"],
+        "traderId": c.get("trader_id"),
+        "displayName": c.get("display_name"),
+        "body": c["body"],
+        "createdAt": c["created_at"],
+    }
+
+
+@router.get("/{event_id}/comments")
+async def get_event_comments(event_id: str):
+    event = await db.get_event(event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    comments = await db.list_comments(event_id)
+    return {"comments": [_comment_to_response(c) for c in comments]}
+
+
+@router.post("/{event_id}/comments")
+async def post_comment(event_id: str, body: CommentBody):
+    if not body.text or not body.text.strip():
+        raise HTTPException(status_code=400, detail="text required")
+    event = await db.get_event(event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    if event["status"] not in ("open", "resolved"):
+        raise HTTPException(status_code=409, detail="Comments not allowed for this event")
+    comment = await db.add_comment(
+        event_id,
+        body.text.strip(),
+        trader_id=body.traderId,
+        display_name=body.displayName,
+    )
+    return _comment_to_response(comment)
 
 
 @router.post("/{event_id}/trade")
@@ -376,3 +440,20 @@ async def get_explanation(event_id: str):
     if not explanation:
         return {"explanation": None}
     return {"explanation": explanation}
+
+
+@router.get("/{event_id}/image")
+async def get_event_image(event_id: str):
+    """Serve the generated thumbnail image for the event, if it exists."""
+    path = os.path.join(EVENT_IMAGES_DIR, f"{event_id}.png")
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="Image not found")
+    return FileResponse(path, media_type="image/png")
+
+
+@router.get("/{event_id}")
+async def get_event(event_id: str):
+    event = await db.get_event(event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    return await _event_to_response_async(event)

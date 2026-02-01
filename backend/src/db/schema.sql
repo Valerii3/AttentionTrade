@@ -37,6 +37,16 @@ CREATE TABLE IF NOT EXISTS event_positions (
   net_down REAL NOT NULL DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS event_comments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id TEXT NOT NULL REFERENCES events(id),
+  trader_id TEXT,
+  display_name TEXT,
+  body TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE INDEX IF NOT EXISTS idx_index_snapshots_event ON index_snapshots(event_id);
 CREATE INDEX IF NOT EXISTS idx_trades_event ON trades(event_id);
 CREATE INDEX IF NOT EXISTS idx_trades_trader ON trades(trader_id);
+CREATE INDEX IF NOT EXISTS idx_event_comments_event ON event_comments(event_id);
