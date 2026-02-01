@@ -56,7 +56,7 @@ def _event_definition_default(
     suggested = 60 if suggest_window_only else window_minutes
     return {
         "event": name,
-        "channels": ["Hacker News", "Reddit"],
+        "channels": ["Hacker News", "Reddit", "YouTube"],
         "tools": DEFAULT_TOOL_IDS,
         "keywords": keywords[:10] if keywords else [name_lower],
         "exclusions": ["mouse cursor", "ui cursor", "cursor pointer"],
@@ -120,7 +120,7 @@ def _event_definition_llm(
         if content.endswith("```"):
             content = content.rsplit("```", 1)[0].strip()
         out = json.loads(content)
-        out.setdefault("channels", ["Hacker News", "Reddit"])
+        out.setdefault("channels", ["Hacker News", "Reddit", "YouTube"])
         out.setdefault("tools", DEFAULT_TOOL_IDS)
         out.setdefault("keywords", [name])
         out.setdefault("exclusions", [])

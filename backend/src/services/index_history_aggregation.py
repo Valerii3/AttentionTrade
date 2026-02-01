@@ -12,6 +12,7 @@ INTERVAL_SECONDS = {
     "1d": 86400,
     "1w": 604800,
     "1m": 2592000,  # ~30 days
+    "6m": 2592000,  # monthly buckets for 6-month view
 }
 
 
@@ -29,7 +30,7 @@ def aggregate_history(
     """
     Bucket raw snapshots by interval. Each bucket emits one point { t, index } with last value (close).
     raw: list of { "t": "ISO8601", "index": float }
-    interval: one of "1h", "6h", "1d", "1w", "1m"
+    interval: one of "1h", "6h", "1d", "1w", "1m", "6m"
     window_start_iso: optional; if provided, bucket boundaries align to this time.
     """
     if not raw or interval not in INTERVAL_SECONDS:

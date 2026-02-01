@@ -42,7 +42,7 @@ Base URL: `http://localhost:8000` (or set via env).
 - `sourceUrl` (optional): e.g. Reddit URL.
 - `description` (optional): short context if no URL.
 
-Backend runs: initial reasonability check (Gemini + Google Search when `GEMINI_API_KEY` set), agent tool selection, index build (e.g. Hacker News via Algolia), then traction gate and accept decision. Event is stored as `proposed` during analysis, then set to `open` (accepted) or `rejected`. **Recurring:** When an event resolves, a new window for the same topic is opened automatically (unless the event is a demo). Resolved windows can be listed with `GET /events?status=resolved&name=TopicName` for history (e.g. ↑ ↓ ↑ ↑).
+Backend runs: initial reasonability check (Gemini + Google Search when `GEMINI_API_KEY` set); structured output includes `pass` and `should_build_index`. If the agent says there is enough traction (`should_build_index`), the backend builds the **attention index via a single Gemini + Google Search call** (no channel APIs such as Hacker News, Reddit, YouTube). Gemini rates the topic over **up to 6 months** (max lookback) based on news and social media virality; it returns a current index and monthly points for the chart. **6 months is the maximum**; for newer events, months with no traction use **index 0**. On Gemini failure the backend falls back to a default index (100) and synthetic chart data. Then an accept decision (Gemini) may still reject. Event is stored as `proposed` during analysis, then set to `open` (accepted) or `rejected`. **Recurring:** When an event resolves, a new window for the same topic is opened automatically (unless the event is a demo). Resolved windows can be listed with `GET /events?status=resolved&name=TopicName` for history (e.g. ↑ ↓ ↑ ↑).
 
 **Response:** `201 Created`  
 Body: full **Event** object (see below). `status` is `open` (accepted, ready to trade), `rejected` (not accepted), or `proposed` (if returned before accept/reject).
@@ -50,7 +50,7 @@ Body: full **Event** object (see below). `status` is `open` (accepted, ready to 
 When `status` is `rejected`, the response includes **`rejectReason`** (string). Common cases:
 - **Attention-native only:** Events must be attention markets, not outcome markets. Outcome-style proposals (resolvable by checking one number, e.g. “Will X get 100 stars by Friday?” or “Will X hit N users?”) may be rejected with `rejectReason` explaining the rule and suggesting an attention framing (e.g. “Will attention around [topic] increase in the next 60 minutes?”).
 - **Initial reasonability check failed** — e.g. no or insufficient information about the event on the web.
-- **Insufficient attention (traction)** — total activity from selected channels (e.g. Hacker News) is below the traction threshold; the event is not tradable yet. Message is typically: *"There isn't enough attention for this event yet, so it's not tradable."*
+- **No traction (agent)** — the reasonability agent returns `should_build_index: false` (e.g. topic has no or negligible traction); the event is rejected without running the index build.
 - **Accept decision (Gemini)** — agent decided not to accept for trading; reason is in `rejectReason`.
 
 ---
@@ -127,14 +127,14 @@ Body: single **Event** object.
 - `demo`: `true` when this is a demo market (accelerated dynamics, synthetic index). Demo markets use 2-min windows and must be labeled in the UI (e.g. "Demo: accelerated attention dynamics").
 - `priceUp` + `priceDown` are in [0, 1] and sum to 1.
 - `resolution` is set when status is `resolved`.
-- `rejectReason` is present when `status` is `rejected` (e.g. reasonability check failed, insufficient attention/traction, or accept decision).
+- `rejectReason` is present when `status` is `rejected` (e.g. reasonability check failed, agent says no traction / do not build index, or accept decision).
 
 ---
 
 ### GET /events/:id/index-history
 
 **Query (optional):**
-- `interval`: `1h` | `6h` | `1d` | `1w` | `1m` | `raw`. When omitted or `raw`/`all`, returns all raw snapshots. When `1h`, `6h`, `1d`, `1w`, or `1m`, returns one point per time bucket (last value in bucket).
+- `interval`: `1h` | `6h` | `1d` | `1w` | `1m` | `6m` | `raw`. When omitted or `raw`/`all`, returns all raw snapshots. When `1h`, `6h`, `1d`, `1w`, `1m`, or `6m`, returns one point per time bucket (last value in bucket). Use `6m` for a 6-month view (monthly buckets; data backfilled via Gemini + Google Search at propose time).
 
 **Response:** `200 OK`  
 Body:

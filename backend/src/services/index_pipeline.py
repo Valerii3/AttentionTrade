@@ -14,11 +14,24 @@ from typing import Any, Callable, Optional
 import httpx
 
 # Weights per channel (must sum to 1 for scaling)
-CHANNEL_WEIGHTS = {"Hacker News": 0.35, "Reddit": 0.35, "GitHub": 0.15, "LinkedIn": 0.15}
+CHANNEL_WEIGHTS = {
+    "Hacker News": 0.30,
+    "Reddit": 0.25,
+    "YouTube": 0.25,
+    "GitHub": 0.10,
+    "LinkedIn": 0.10,
+}
 
 ALGOLIA_HN_SEARCH = "https://hn.algolia.com/api/v1/search_by_date"
 HN_SEARCH_TIMEOUT = 20.0
 HN_HITS_PER_PAGE = 100
+
+# Tech channels use 30-day lookback for index build; HN cap
+HN_LOOKBACK_DAYS_TECH = 30
+
+YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3"
+YOUTUBE_SEARCH_TIMEOUT = 15.0
+YOUTUBE_MAX_VIDEOS = 25
 
 logger = logging.getLogger(__name__)
 
@@ -33,14 +46,15 @@ def fetch_hn_activity(
     config: Optional[dict] = None,
 ) -> float:
     """
-    Fetch HN activity via Algolia search_by_date; score = sum over matching hits of (1 + log1p(points)).
-    Exclusions applied to title and url. Lookback days derived from config.window_minutes.
+    Fetch HN activity via Algolia search_by_date. Score = sum over hits of engagement:
+    log1p(points) + 0.5*log1p(num_comments). For tech we use 30-day lookback; otherwise up to 7 days.
     """
     if not keywords:
         return 0.0
     config = config or {}
     window_minutes = config.get("window_minutes", 1440)
-    days = max(1, min(7, window_minutes // 1440))
+    # Tech: use last month (30 days) for index build; 1h window still gets 30 days of HN data
+    days = min(HN_LOOKBACK_DAYS_TECH, max(1, window_minutes // 1440)) if window_minutes >= 1440 else HN_LOOKBACK_DAYS_TECH
     query = " ".join(kw[:50] for kw in keywords[:5]).strip() or keywords[0]
     exclusions_lower = [e.lower() for e in exclusions] if exclusions else []
 
@@ -64,7 +78,9 @@ def fetch_hn_activity(
             if any(exc in title or exc in url for exc in exclusions_lower):
                 continue
             points = h.get("points") or 0
-            score += 1.0 + math.log1p(max(0, points))
+            num_comments = h.get("num_comments") or 0
+            # Engagement formula: points + comments (log-scaled)
+            score += math.log1p(max(0, points)) + 0.5 * math.log1p(max(0, num_comments))
         return round(score, 4)
     except Exception as e:
         logger.warning("HN Algolia fetch failed: %s", e)
@@ -92,11 +108,71 @@ def fetch_linkedin_activity(
     return 0.0
 
 
+def fetch_youtube_activity(
+    keywords: list[str],
+    exclusions: list[str],
+    config: Optional[dict] = None,
+) -> float:
+    """
+    Fetch YouTube activity via Data API v3. Score = sum over videos (last 30 days) of
+    engagement: log1p(views) + log1p(likes) + 2*log1p(commentCount). Requires YOUTUBE_API_KEY.
+    """
+    import os
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key or not keywords:
+        return 0.0
+    config = config or {}
+    query = " ".join(kw[:50] for kw in keywords[:5]).strip() or keywords[0]
+    published_after = (datetime.now(timezone.utc) - timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    try:
+        with httpx.Client(timeout=YOUTUBE_SEARCH_TIMEOUT) as client:
+            search_r = client.get(
+                f"{YOUTUBE_API_BASE}/search",
+                params={
+                    "part": "id",
+                    "q": query,
+                    "type": "video",
+                    "publishedAfter": published_after,
+                    "maxResults": YOUTUBE_MAX_VIDEOS,
+                    "key": api_key,
+                },
+            )
+            search_r.raise_for_status()
+        search_data = search_r.json()
+        video_ids = [item["id"]["videoId"] for item in search_data.get("items", []) if item.get("id", {}).get("videoId")]
+        if not video_ids:
+            return 0.0
+        with httpx.Client(timeout=YOUTUBE_SEARCH_TIMEOUT) as client:
+            stats_r = client.get(
+                f"{YOUTUBE_API_BASE}/videos",
+                params={
+                    "part": "statistics",
+                    "id": ",".join(video_ids[:25]),
+                    "key": api_key,
+                },
+            )
+            stats_r.raise_for_status()
+        stats_data = stats_r.json()
+        score = 0.0
+        for item in stats_data.get("items", []):
+            s = item.get("statistics", {})
+            views = int(s.get("viewCount") or 0)
+            likes = int(s.get("likeCount") or 0)
+            comments = int(s.get("commentCount") or 0)
+            score += math.log1p(views) + math.log1p(likes) + 2.0 * math.log1p(comments)
+        return round(score, 4)
+    except Exception as e:
+        logger.warning("YouTube API fetch failed: %s", e)
+        return 0.0
+
+
 # Map tool id -> (channel_display_name, fetcher_fn) for agent-selected tools
 def _get_tool_fetchers() -> dict[str, tuple[str, Callable[..., float]]]:
     return {
         "hn_frontpage": ("Hacker News", fetch_hn_activity),
         "reddit": ("Reddit", fetch_reddit_activity),
+        "youtube": ("YouTube", fetch_youtube_activity),
         "github": ("GitHub", fetch_github_activity),
         "linkedin": ("LinkedIn", fetch_linkedin_activity),
     }
@@ -132,6 +208,7 @@ def _get_fetchers_for_config(config: dict) -> list[tuple[str, Callable[..., floa
     name_to_fetcher = {
         "Hacker News": fetch_hn_activity,
         "Reddit": fetch_reddit_activity,
+        "YouTube": fetch_youtube_activity,
         "GitHub": fetch_github_activity,
         "LinkedIn": fetch_linkedin_activity,
     }

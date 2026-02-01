@@ -24,6 +24,11 @@ TOOLS: list[Tool] = [
         "description": "Fetches Reddit subreddit or post (placeholder; real impl would use Reddit API).",
     },
     {
+        "id": "youtube",
+        "name": "YouTube",
+        "description": "YouTube videos (search last 30 days); engagement from views, likes, comments. Use for non-tech / general / entertainment.",
+    },
+    {
         "id": "github",
         "name": "GitHub",
         "description": "Fetches GitHub repos/activity (placeholder; real impl TBD).",

@@ -11,8 +11,9 @@ from pydantic import BaseModel
 from backend.src.constants import market_type_to_minutes
 from backend.src.db import queries as db
 from backend.src.services.trading import prices_from_position
-from backend.src.services.index_pipeline import get_iso_now, build_index
+from backend.src.services.index_pipeline import get_iso_now
 from backend.src.services.index_history_aggregation import aggregate_history
+from backend.src.services.research_index import build_index_via_gemini
 from backend.src.services.tools import get_available_tools
 
 router = APIRouter(prefix="/events", tags=["events"])
@@ -130,15 +131,11 @@ async def propose_event(body: ProposeEventBody):
             reject_reason_if_outcome_style,
             select_tools_and_config,
             should_accept_event,
-            has_traction,
-            NO_ATTENTION_REASON,
         )
     except Exception:
         from agent.propose_agent import (
             select_tools_and_config,
             should_accept_event,
-            has_traction,
-            NO_ATTENTION_REASON,
         )
         initial_reasonability_check = None
         reject_reason_if_outcome_style = None
@@ -190,6 +187,25 @@ async def propose_event(body: ProposeEventBody):
             "index_current": 100.0,
             "resolution": None,
             "config": {"reject_reason": reasonability.get("reason", "Event did not pass initial reasonability check.")},
+            "created_at": now.isoformat(),
+        }
+        return await _event_to_response_async(synthetic)
+
+    # If agent says no traction / don't build index, reject without running index build (no HN fetch)
+    if not body.demo and reasonability is not None and not reasonability.get("should_build_index", True):
+        logger.info("Event rejected: agent says no traction / do not build index: %s", reasonability.get("reason"))
+        now = datetime.now(timezone.utc)
+        window_end = now + timedelta(minutes=window_minutes)
+        synthetic = {
+            "id": str(uuid.uuid4()),
+            "name": body.name.strip(),
+            "status": "rejected",
+            "window_start": now.isoformat(),
+            "window_end": window_end.isoformat(),
+            "index_start": 100.0,
+            "index_current": 100.0,
+            "resolution": None,
+            "config": {"reject_reason": reasonability.get("reason", "Not enough traction to build the index yet.")},
             "created_at": now.isoformat(),
         }
         return await _event_to_response_async(synthetic)
@@ -289,13 +305,12 @@ async def propose_event(body: ProposeEventBody):
             config,
         )
     else:
-        index_value, activity = await build_index(event_id, config)
-
-        if not has_traction(activity):
-            config["reject_reason"] = NO_ATTENTION_REASON
-            await db.update_event_on_reject(event_id, config)
-            event = await db.get_event(event_id)
-            return await _event_to_response_async(event)
+        index_value, activity = await build_index_via_gemini(
+            event_id,
+            body.name.strip(),
+            body.sourceUrl,
+            body.description,
+        )
 
         try:
             decision = should_accept_event(body.name, index_value, activity)
@@ -376,7 +391,7 @@ async def get_index_history(event_id: str, interval: Optional[str] = None):
     history = await db.get_index_history(event_id)
     interval_normalized = (interval or "").strip().lower()
     if interval_normalized and interval_normalized not in ("raw", "all"):
-        if interval_normalized in ("1h", "6h", "1d", "1w", "1m"):
+        if interval_normalized in ("1h", "6h", "1d", "1w", "1m", "6m"):
             history = aggregate_history(
                 history,
                 interval_normalized,

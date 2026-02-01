@@ -211,6 +211,23 @@ async def add_index_snapshot(event_id: str, t: str, value: float) -> None:
         await conn.close()
 
 
+async def add_index_snapshots_batch(
+    event_id: str, points: list[tuple[str, float]]
+) -> None:
+    """Insert multiple index snapshots (e.g. 6-month backfill)."""
+    if not points:
+        return
+    conn = await get_db()
+    try:
+        await conn.executemany(
+            "INSERT INTO index_snapshots (event_id, t, value) VALUES (?, ?, ?)",
+            [(event_id, t, value) for t, value in points],
+        )
+        await conn.commit()
+    finally:
+        await conn.close()
+
+
 async def get_index_history(event_id: str) -> list[dict]:
     conn = await get_db()
     try:

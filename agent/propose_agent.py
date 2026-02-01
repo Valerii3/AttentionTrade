@@ -12,6 +12,34 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_TOOL_IDS = ["hn_frontpage", "reddit"]
 
+
+def _parse_first_json(text: str) -> Optional[dict[str, Any]]:
+    """Parse the first JSON object from text. Handles Gemini returning extra content after the JSON (e.g. line 2)."""
+    text = text.strip()
+    if not text:
+        return None
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as e:
+        if "Extra data" not in str(e):
+            raise
+    # Extra data: take only the first JSON object (find matching brace)
+    start = text.find("{")
+    if start < 0:
+        return None
+    depth = 0
+    for i in range(start, len(text)):
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                try:
+                    return json.loads(text[start : i + 1])
+                except json.JSONDecodeError:
+                    return None
+    return None
+
 # Minimum total activity (sum over channels) to consider event tradable
 MIN_TRACTION_SCORE = 0.5
 
@@ -69,13 +97,13 @@ def initial_reasonability_check(
     """
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
-        return {"pass": True, "reason": "No API key; skipping initial check."}
+        return {"pass": True, "reason": "No API key; skipping initial check.", "should_build_index": True}
 
     try:
         from google import genai
         client = genai.Client(api_key=api_key)
     except ImportError:
-        return {"pass": True, "reason": "Gemini not available; skipping check."}
+        return {"pass": True, "reason": "Gemini not available; skipping check.", "should_build_index": True}
 
     user_parts = [f"Event name: {name}."]
     if source_url:
@@ -88,9 +116,10 @@ def initial_reasonability_check(
         "You check whether an event is suitable for an attention-trading market (tradable on attention). "
         "Rules: (1) The event must be about ATTENTION (e.g. 'Will attention around X increase?'), not an outcome resolvable by one number. "
         "If the event is an outcome market (e.g. 'Will X get 100 stars by Friday?', 'Will X hit N users?', 'Will X launch?'), reply with pass: false and reason: \"This is an outcome market (resolvable by checking one number). Try instead: Will attention around [topic] increase in the next 60 minutes?\" "
-        "(2) Use the event name and description to understand what the event is. (3) Use Google Search to verify the event is real and discussed on the web. "
-        "If you find no or insufficient information, the event is not tradable. "
-        "Reply with ONLY a JSON object: {\"pass\": true or false, \"reason\": \"short explanation\"}. "
+        "(2) Use the event name and description to understand what the event is. (3) Use Google Search to verify the event is real. "
+        "Be permissive: if the topic is real and has any discussion (including YouTube, social, news), pass is true. Only reject for spam or clearly fake topics. "
+        "(4) should_build_index: set true whenever we can build an index (we have YouTube for non-tech and HN/Reddit for tech). Default to true so we try to build; set false only for completely obscure or unverifiable topics. "
+        "Reply with ONLY a JSON object: {\"pass\": true or false, \"reason\": \"short explanation\", \"should_build_index\": true or false}. "
         "If pass is false, reason should be user-friendly. No markdown, no code fences.\n\n"
         + user_content
     )
@@ -103,43 +132,64 @@ def initial_reasonability_check(
             contents=prompt,
             config=config,
         )
-        # Log full Gemini response
+        # Extract text: try .text first, then candidates[0].content.parts (some parts may be tool_call, not text)
+        text = None
         try:
-            text = getattr(response, "text", None) or (
-                response.candidates[0].content.parts[0].text
-                if response.candidates and response.candidates[0].content.parts
-                else None
-            )
-            if text:
-                logger.info("Gemini reasonability response: %s", text[:2000] + ("..." if len(text) > 2000 else ""))
-            else:
-                logger.info("Gemini reasonability response: (no text)")
+            if getattr(response, "text", None):
+                text = (response.text or "").strip()
+            if not text and getattr(response, "candidates", None) and len(response.candidates) > 0:
+                c = response.candidates[0]
+                content = getattr(c, "content", None)
+                parts = getattr(content, "parts", None) if content else None
+                if parts:
+                    text_parts = [
+                        part.text for part in parts
+                        if getattr(part, "text", None) and (part.text or "").strip()
+                    ]
+                    if text_parts:
+                        text = " ".join(text_parts).strip()
         except Exception as e:
-            logger.warning("Could not log Gemini response: %s", e)
+            logger.warning("Could not extract Gemini response text: %s", e)
 
-        if hasattr(response, "text") and response.text:
-            text = (response.text or "").strip()
-        elif response.candidates and response.candidates[0].content.parts:
-            text = (response.candidates[0].content.parts[0].text or "").strip()
-        else:
-            logger.warning("No text in Gemini response; rejecting.")
-            return {"pass": False, "reason": "No response from verification; event rejected."}
+        if not text:
+            # Log why we got no text (safety block, empty candidates, etc.)
+            block_reason = None
+            try:
+                if getattr(response, "prompt_feedback", None):
+                    pf = response.prompt_feedback
+                    block_reason = getattr(pf, "block_reason", None) or getattr(pf, "block_reason_name", None)
+                if block_reason is None and getattr(response, "candidates", None) and len(response.candidates) > 0:
+                    c = response.candidates[0]
+                    block_reason = getattr(c, "finish_reason", None) or getattr(c, "finish_reason_name", None)
+            except Exception as e:
+                logger.warning("Could not get block reason: %s", e)
+            reason_msg = "No response from verification; event rejected."
+            if block_reason is not None:
+                reason_msg = f"Verification blocked ({block_reason}); try rephrasing or a different topic."
+                logger.warning("No text in Gemini response; block_reason=%s", block_reason)
+            else:
+                logger.warning("No text in Gemini response; rejecting.")
+            return {"pass": False, "reason": reason_msg, "should_build_index": False}
 
         if text.startswith("```"):
             text = text.split("\n", 1)[1] if "\n" in text else text[3:]
         if text.endswith("```"):
             text = text.rsplit("```", 1)[0].strip()
-        out = json.loads(text)
+        out = _parse_first_json(text)
+        if out is None:
+            logger.warning("Gemini response not valid JSON (could not extract object)")
+            return {"pass": False, "reason": "Verification response invalid; event rejected.", "should_build_index": False}
         passed = bool(out.get("pass", False))
         reason = out.get("reason", "")
-        logger.info("Reasonability: pass=%s, reason=%s", passed, reason)
-        return {"pass": passed, "reason": reason}
+        should_build_index = bool(out.get("should_build_index", True))
+        logger.info("Reasonability: pass=%s, reason=%s, should_build_index=%s", passed, reason, should_build_index)
+        return {"pass": passed, "reason": reason, "should_build_index": should_build_index}
     except json.JSONDecodeError as e:
         logger.warning("Gemini response not valid JSON: %s", e)
-        return {"pass": False, "reason": "Verification response invalid; event rejected."}
+        return {"pass": False, "reason": "Verification response invalid; event rejected.", "should_build_index": False}
     except Exception as exc:
         logger.warning("Error during initial check: %s", exc, exc_info=True)
-        return {"pass": False, "reason": "Error during initial check; event rejected."}
+        return {"pass": False, "reason": "Error during initial check; event rejected.", "should_build_index": False}
 
 
 def select_tools_and_config(
@@ -183,7 +233,7 @@ def _select_tools_fallback(
         keywords = list(set(words + [name_lower]))
         return {
             "event": name,
-            "channels": ["Hacker News", "Reddit", "GitHub", "LinkedIn"],
+            "channels": ["Hacker News", "Reddit", "YouTube", "GitHub", "LinkedIn"],
             "tools": DEFAULT_TOOL_IDS,
             "keywords": keywords[:10] if keywords else [name_lower],
             "exclusions": ["mouse cursor", "ui cursor", "cursor pointer"],
@@ -220,12 +270,13 @@ def _select_tools_gemini(
         "You are a config generator for an attention-tracking system. "
         "Use the event name and description (if provided) to decide which tools to use. "
         "Output ONLY a single JSON object with keys: tools (array of tool ids), keywords (array of strings), exclusions (array of strings). "
-        "Available tools: Reddit (id: reddit), Hacker News (id: hn_frontpage), GitHub (id: github), LinkedIn (id: linkedin). "
+        "Available tools: Hacker News (id: hn_frontpage), Reddit (id: reddit), YouTube (id: youtube), GitHub (id: github), LinkedIn (id: linkedin). "
         "Routing rules: "
-        "If it's a meme or similar casual/viral content, use reddit. "
+        "If it's NOT technical (entertainment, general, viral, music, sports, culture), use youtube (and optionally reddit). "
         "If it's technical (software, repos, dev tools), use hn_frontpage + reddit + github. "
-        "If it's an event (conference, meetup, professional event), use linkedin. "
-        "You can combine tools when the event fits multiple categories. No markdown, no explanation.\n\n"
+        "If it's a meme or casual/viral, use reddit + youtube. "
+        "If it's an event (conference, meetup, professional), use linkedin. "
+        "You can combine tools. No markdown, no explanation.\n\n"
         + user_content
     )
 
@@ -247,12 +298,14 @@ def _select_tools_gemini(
             text = text.split("\n", 1)[1] if "\n" in text else text[3:]
         if text.endswith("```"):
             text = text.rsplit("```", 1)[0].strip()
-        out = json.loads(text)
+        out = _parse_first_json(text)
+        if out is None:
+            return _select_tools_fallback(name, source_url, description, window_minutes)
         out.setdefault("tools", DEFAULT_TOOL_IDS)
         out.setdefault("keywords", [name])
         out.setdefault("exclusions", [])
         out["event"] = name
-        out["channels"] = ["Hacker News", "Reddit", "GitHub", "LinkedIn"]
+        out["channels"] = ["Hacker News", "Reddit", "YouTube", "GitHub", "LinkedIn"]
         out["window_minutes"] = window_minutes
         out["source_url"] = source_url
         out["description"] = description
@@ -304,7 +357,9 @@ def should_accept_event(
             text = text.split("\n", 1)[1] if "\n" in text else text[3:]
         if text.endswith("```"):
             text = text.rsplit("```", 1)[0].strip()
-        out = json.loads(text)
+        out = _parse_first_json(text)
+        if out is None:
+            return {"accept": True, "reason": "Could not parse response; accepted by default."}
         return {"accept": bool(out.get("accept", True)), "reason": out.get("reason", "")}
     except Exception:
         return {"accept": True, "reason": "Error calling Gemini; accepted by default."}
@@ -365,7 +420,9 @@ def suggest_headline_subline(
             text = text.split("\n", 1)[1] if "\n" in text else text[3:]
         if text.endswith("```"):
             text = text.rsplit("```", 1)[0].strip()
-        out = json.loads(text)
+        out = _parse_first_json(text)
+        if out is None:
+            return _headline_subline_default(name, market_type)
         headline = (out.get("headline") or "").strip() or _headline_subline_default(name, market_type)["headline"]
         subline = (out.get("subline") or "").strip() or ("Attention change · next 60 min" if market_type == "1h" else "Sustained attention · next 24h")
         label_up = (out.get("label_up") or "").strip() or "Heating up"

@@ -13,7 +13,7 @@ export interface ChartPoint {
   index: number;
 }
 
-export const TIME_FRAMES = ["1h", "6h", "1d", "1w", "1m", "all"] as const;
+export const TIME_FRAMES = ["1h", "6h", "1d", "1w", "1m", "6m", "all"] as const;
 export type Timeframe = (typeof TIME_FRAMES)[number];
 
 interface PriceChartProps {

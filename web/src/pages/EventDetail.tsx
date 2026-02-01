@@ -34,6 +34,8 @@ function formatChartTime(t: string, tf: Timeframe): string {
   const d = new Date(t);
   if (tf === "1h" || tf === "6h")
     return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  if (tf === "6m")
+    return d.toLocaleDateString(undefined, { month: "short", year: "2-digit" });
   if (tf === "1d" || tf === "1w" || tf === "1m")
     return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
   return d.toLocaleTimeString();

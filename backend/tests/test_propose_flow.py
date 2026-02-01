@@ -23,8 +23,8 @@ client = TestClient(app)
 
 
 def test_propose_event_without_window_uses_default():
-    """Omitting windowMinutes uses default (1h). Activity above traction threshold -> accepted."""
-    with patch("agent.propose_agent.initial_reasonability_check", return_value={"pass": True, "reason": "ok"}):
+    """Omitting windowMinutes uses default (1h). Agent says build index -> index build runs -> accepted."""
+    with patch("agent.propose_agent.initial_reasonability_check", return_value={"pass": True, "reason": "ok", "should_build_index": True}):
         with patch("agent.propose_agent.select_tools_and_config") as mock_config:
             mock_config.return_value = {
                 "tools": ["hn_frontpage", "reddit"],
@@ -35,9 +35,8 @@ def test_propose_event_without_window_uses_default():
                 "source_url": None,
                 "description": None,
             }
-            with patch("backend.src.routes.events.build_index", new_callable=AsyncMock) as mock_build:
-                # Activity >= MIN_TRACTION_SCORE (0.5) so traction gate passes
-                mock_build.return_value = (100.0, {"Hacker News": 1.0, "Reddit": 0.0})
+            with patch("backend.src.routes.events.build_index_via_gemini", new_callable=AsyncMock) as mock_build:
+                mock_build.return_value = (100.0, {"Gemini (6mo)": 100.0})
                 with patch("agent.propose_agent.should_accept_event", return_value={"accept": True, "reason": "ok"}):
                     r = client.post("/events", json={"name": "Test"})
     assert r.status_code == 201
@@ -69,8 +68,8 @@ def test_propose_event_initial_check_rejection_returns_rejected():
 
 
 def test_propose_event_valid_window_accepted():
-    """Valid marketType/window is accepted. Activity above traction threshold -> accepted."""
-    with patch("agent.propose_agent.initial_reasonability_check", return_value={"pass": True, "reason": "ok"}):
+    """Valid marketType/window is accepted. Agent says build index -> index build runs -> accepted."""
+    with patch("agent.propose_agent.initial_reasonability_check", return_value={"pass": True, "reason": "ok", "should_build_index": True}):
         with patch("agent.propose_agent.select_tools_and_config") as mock_config:
             mock_config.return_value = {
                 "tools": ["hn_frontpage", "reddit"],
@@ -81,8 +80,8 @@ def test_propose_event_valid_window_accepted():
                 "source_url": None,
                 "description": None,
             }
-            with patch("backend.src.routes.events.build_index", new_callable=AsyncMock) as mock_build:
-                mock_build.return_value = (100.0, {"Hacker News": 2.0, "Reddit": 0.0})
+            with patch("backend.src.routes.events.build_index_via_gemini", new_callable=AsyncMock) as mock_build:
+                mock_build.return_value = (100.0, {"Gemini (6mo)": 100.0})
                 with patch("agent.propose_agent.should_accept_event", return_value={"accept": True, "reason": "ok"}):
                     r = client.post(
                         "/events",
@@ -95,39 +94,25 @@ def test_propose_event_valid_window_accepted():
 
 
 def test_propose_event_no_traction_rejected():
-    """When build_index returns activity below MIN_TRACTION_SCORE, event is rejected with no-attention reason."""
-    with patch("agent.propose_agent.initial_reasonability_check", return_value={"pass": True, "reason": "ok"}):
-        with patch("agent.propose_agent.select_tools_and_config") as mock_config:
-            mock_config.return_value = {
-                "tools": ["hn_frontpage", "reddit"],
-                "keywords": ["obscure"],
-                "exclusions": [],
-                "window_minutes": 60,
-                "market_type": "1h",
-                "source_url": None,
-                "description": None,
-            }
-            with patch("backend.src.routes.events.build_index", new_callable=AsyncMock) as mock_build:
-                mock_build.return_value = (100.0, {"Hacker News": 0.0, "Reddit": 0.0})
-                r = client.post("/events", json={"name": "Obscure Event"})
+    """When agent returns should_build_index false, event is rejected without running index build (no HN fetch)."""
+    with patch("agent.propose_agent.initial_reasonability_check") as mock_check:
+        mock_check.return_value = {
+            "pass": True,
+            "reason": "Not enough traction to build the index yet.",
+            "should_build_index": False,
+        }
+        with patch("backend.src.routes.events.build_index_via_gemini", new_callable=AsyncMock) as mock_build:
+            r = client.post("/events", json={"name": "Obscure Event"})
+            mock_build.assert_not_called()
     assert r.status_code == 201
     data = r.json()
     assert data["status"] == "rejected"
     assert "rejectReason" in data
-    assert "not tradable" in data["rejectReason"].lower() or "attention" in data["rejectReason"].lower()
 
 
-def test_propose_event_build_index_completes_with_mocked_hn():
-    """Propose flow runs real build_index with Algolia mocked; traction above threshold -> open."""
-    mock_response = MagicMock()
-    mock_response.raise_for_status = MagicMock()
-    mock_response.json.return_value = {
-        "hits": [
-            {"title": "Cursor Hackathon Dec 24", "points": 10, "url": "https://example.com"},
-        ]
-    }
-
-    with patch("agent.propose_agent.initial_reasonability_check", return_value={"pass": True, "reason": "ok"}):
+def test_propose_event_build_index_completes_with_mocked_gemini():
+    """Propose flow runs build_index_via_gemini (mocked) when agent says should_build_index -> open."""
+    with patch("agent.propose_agent.initial_reasonability_check", return_value={"pass": True, "reason": "ok", "should_build_index": True}):
         with patch("agent.propose_agent.select_tools_and_config") as mock_config:
             mock_config.return_value = {
                 "tools": ["hn_frontpage", "reddit"],
@@ -138,12 +123,8 @@ def test_propose_event_build_index_completes_with_mocked_hn():
                 "source_url": None,
                 "description": None,
             }
-            with patch("backend.src.services.index_pipeline.httpx.Client") as mock_client_cls:
-                mock_client = MagicMock()
-                mock_client.get.return_value = mock_response
-                mock_client.__enter__.return_value = mock_client
-                mock_client.__exit__.return_value = None
-                mock_client_cls.return_value = mock_client
+            with patch("backend.src.routes.events.build_index_via_gemini", new_callable=AsyncMock) as mock_build:
+                mock_build.return_value = (100.0, {"Gemini (6mo)": 100.0})
                 with patch("agent.propose_agent.should_accept_event", return_value={"accept": True, "reason": "ok"}):
                     r = client.post("/events", json={"name": "Cursor Hackathon"})
     assert r.status_code == 201
