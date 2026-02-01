@@ -478,20 +478,17 @@ def generate_event_image(
         response = client.models.generate_content(
             model="gemini-2.5-flash-image",
             contents=[prompt],
+            config=genai.types.GenerateContentConfig(
+                response_modalities=["TEXT", "IMAGE"]
+            ),
         )
-        parts = getattr(response, "parts", None) or (
-            response.candidates[0].content.parts
-            if response.candidates and response.candidates[0].content.parts
-            else []
-        )
+        parts = getattr(response, "parts", None) or response.candidates[0].content.parts
         for part in parts:
-            if getattr(part, "inline_data", None) is not None:
-                img = getattr(part, "as_image", lambda: None)()
-                if img is not None and callable(getattr(img, "save", None)):
-                    os.makedirs(output_dir, exist_ok=True)
-                    path = os.path.join(output_dir, f"{event_id}.png")
-                    img.save(path)
-                    return path
+            if part.inline_data is not None:
+                os.makedirs(output_dir, exist_ok=True)
+                path = os.path.join(output_dir, f"{event_id}.png")
+                part.as_image().save(path)
+                return path
         return None
     except Exception as e:
         logger.warning("Gemini image generation failed: %s", e)
