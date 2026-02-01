@@ -167,6 +167,14 @@ export async function getExplanation(
   return res.json();
 }
 
+export async function getMarketContext(
+  eventId: string
+): Promise<{ context: string | null }> {
+  const res = await fetch(`${BASE}/events/${eventId}/market-context`);
+  if (!res.ok) throw new Error(res.statusText);
+  return res.json();
+}
+
 export interface EventComment {
   id: number;
   eventId: string;

@@ -8,24 +8,25 @@ import {
   getExplanation,
   getEventComments,
   postComment,
+  getMarketContext,
+  getProfileTrades,
   type Event,
   type IndexHistoryPoint,
   type EventComment,
 } from "@/api-client/client";
-import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-} from "recharts";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { formatCanonicalQuestion } from "@/lib/utils";
 import { useProfile } from "@/contexts/profile-context";
+import { MarketHeader, MarketFilters } from "@/components/market/market-header";
+import { PriceChart } from "@/components/market/price-chart";
+import { TradingPanel } from "@/components/market/trading-panel";
+import { CollapsibleSection } from "@/components/market/collapsible-section";
+import { RulesSection } from "@/components/market/rules-section";
 
 const POLL_MS = 30000;
+
+const DEFAULT_RULES =
+  "This market resolves to Up if the attention index at window end is above the start value, otherwise Down. Index is built from real-time attention signals (e.g. discussion volume).";
 
 export default function EventDetail() {
   const { id } = useParams<{ id: string }>();
@@ -37,10 +38,14 @@ export default function EventDetail() {
   const [commentText, setCommentText] = useState("");
   const [commentSubmitting, setCommentSubmitting] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [tradeSide, setTradeSide] = useState<"up" | "down">("up");
-  const [tradeAmount, setTradeAmount] = useState(10);
-  const [trading, setTrading] = useState(false);
-  const [error, setError] = useState("");
+  const [tradeError, setTradeError] = useState("");
+  const [marketContext, setMarketContext] = useState<string | null>(null);
+  const [marketContextLoading, setMarketContextLoading] = useState(false);
+  const [marketContextError, setMarketContextError] = useState<string | null>(
+    null
+  );
+  const [positionUp, setPositionUp] = useState(0);
+  const [positionDown, setPositionDown] = useState(0);
 
   const load = async () => {
     if (!id) return;
@@ -57,7 +62,6 @@ export default function EventDetail() {
       }
       const { comments: commentList } = await getEventComments(id);
       setComments(commentList);
-      // Past windows for this topic (resolved, same name; exclude current id)
       const { events: resolvedSameTopic } = await listEvents({
         status: "resolved",
         name: e.name,
@@ -86,6 +90,22 @@ export default function EventDetail() {
 
   const { profile } = useProfile();
   const traderId = profile?.traderId;
+
+  // Load position for this event when we have traderId
+  useEffect(() => {
+    if (!traderId || !id) return;
+    getProfileTrades(traderId).then(({ trades }) => {
+      let up = 0;
+      let down = 0;
+      for (const t of trades) {
+        if (t.eventId !== id) continue;
+        if (t.side === "up") up += t.amount;
+        else down += t.amount;
+      }
+      setPositionUp(up);
+      setPositionDown(down);
+    }).catch(() => {});
+  }, [traderId, id]);
   const displayName = profile?.displayName;
 
   async function handleCommentSubmit(e: React.FormEvent) {
@@ -106,18 +126,45 @@ export default function EventDetail() {
     }
   }
 
-  async function handleTrade(e: React.FormEvent) {
-    e.preventDefault();
+  async function handleTrade(side: "up" | "down", amount: number) {
     if (!id || !event || event.status !== "open") return;
-    setError("");
-    setTrading(true);
+    setTradeError("");
     try {
-      await trade(id, tradeSide, tradeAmount, traderId);
+      await trade(id, side, amount, traderId);
       await load();
+      // Refresh position after trade
+      if (traderId) {
+        const { trades } = await getProfileTrades(traderId);
+        let up = 0;
+        let down = 0;
+        for (const t of trades) {
+          if (t.eventId !== id) continue;
+          if (t.side === "up") up += t.amount;
+          else down += t.amount;
+        }
+        setPositionUp(up);
+        setPositionDown(down);
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Trade failed");
+      setTradeError(err instanceof Error ? err.message : "Trade failed");
+    }
+  }
+
+  async function handleGenerateMarketContext() {
+    if (!id) return;
+    setMarketContextLoading(true);
+    setMarketContextError(null);
+    setMarketContext(null);
+    try {
+      const { context } = await getMarketContext(id);
+      setMarketContext(context);
+      if (context == null) {
+        setMarketContextError("Unable to generate. Try again.");
+      }
+    } catch {
+      setMarketContextError("Request failed. Try again.");
     } finally {
-      setTrading(false);
+      setMarketContextLoading(false);
     }
   }
 
@@ -139,208 +186,185 @@ export default function EventDetail() {
     index,
   }));
 
+  const title =
+    event.headline ??
+    formatCanonicalQuestion(event.name, event.marketType ?? "1h");
+  const badge = event.marketType ?? "1h";
+  const rulesText = event.subline
+    ? `${event.subline}. ${DEFAULT_RULES}`
+    : DEFAULT_RULES;
+
   return (
-    <div className="p-4 md:p-6 max-w-3xl">
-      <div className="mb-6">
-        <Link
-          to="/"
-          className="text-sm text-muted-foreground hover:text-foreground"
-        >
-          ← Events
-        </Link>
-      </div>
-
-      <div className="bg-card rounded-lg border border-border p-6 relative">
-        <div className="flex gap-4 mb-2">
-          <img
-            src={event.imageUrl || "/event-thumbnail-placeholder.png"}
-            alt=""
-            className="w-16 h-16 rounded-lg object-cover shrink-0 bg-muted"
-          />
-          <div className="min-w-0 flex-1">
-            <h1 className="text-xl font-semibold text-foreground">
-              {event.headline ?? formatCanonicalQuestion(event.name, event.marketType ?? "1h")}
-            </h1>
-            {event.subline && (
-              <p className="text-sm text-muted-foreground mt-0.5">{event.subline}</p>
-            )}
-          </div>
-        </div>
-        {event.demo && (
-          <p className="text-xs text-muted-foreground mt-1">
-            Demo: accelerated attention dynamics.
-          </p>
-        )}
-        <div className="text-sm text-muted-foreground mt-2">
-          Status: <strong className="text-foreground">{event.status}</strong> ·
-          Index: {event.indexCurrent.toFixed(1)} (start: {event.indexStart})
-          {event.status === "open" && (
-            <>
-              {" "}
-              · {event.labelUp ?? "Heating up"} {(event.priceUp * 100).toFixed(0)}% / {event.labelDown ?? "Cooling down"}{" "}
-              {(event.priceDown * 100).toFixed(0)}%
-            </>
-          )}
-          {event.status === "open" && event.volume != null && (
-            <> · Vol. {event.volume}</>
-          )}
-          {event.status === "resolved" && event.resolution && (
-            <>
-              {" "}
-              · Resolved: {event.resolution === "up" ? (event.labelUp ?? "Heating up") : (event.labelDown ?? "Cooling down")}
-            </>
-          )}
+    <div className="min-h-screen bg-background">
+      <main className="max-w-7xl mx-auto px-4 py-6">
+        <div className="mb-4">
+          <Link
+            to="/"
+            className="text-sm text-muted-foreground hover:text-foreground"
+          >
+            ← Events
+          </Link>
         </div>
 
-        {history.length > 0 && (
-          <div className="h-[240px] mt-6 rounded-lg border border-border bg-muted/30 p-4">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={chartData}>
-                <XAxis
-                  dataKey="time"
-                  stroke="var(--muted-foreground)"
-                  fontSize={12}
-                />
-                <YAxis
-                  stroke="var(--muted-foreground)"
-                  fontSize={12}
-                  domain={["auto", "auto"]}
-                />
-                <Tooltip
-                  contentStyle={{
-                    background: "var(--card)",
-                    border: "1px solid var(--border)",
-                    borderRadius: "var(--radius)",
-                  }}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="index"
-                  stroke="var(--primary)"
-                  strokeWidth={2}
-                  dot={false}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        )}
-
-        {event.status === "open" && (
-          <form onSubmit={handleTrade} className="mt-6">
-            <h3 className="text-sm font-medium text-foreground mb-3">
-              Trade (demo credits)
-            </h3>
-            <div className="flex flex-wrap items-center gap-4">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="radio"
-                  name="side"
-                  checked={tradeSide === "up"}
-                  onChange={() => setTradeSide("up")}
-                  className="accent-primary"
-                />
-                <span className="text-sm">{event.labelUp ?? "Heating up"}</span>
-              </label>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="radio"
-                  name="side"
-                  checked={tradeSide === "down"}
-                  onChange={() => setTradeSide("down")}
-                  className="accent-primary"
-                />
-                <span className="text-sm">{event.labelDown ?? "Cooling down"}</span>
-              </label>
-              <Input
-                type="number"
-                min={1}
-                value={tradeAmount}
-                onChange={(e) =>
-                  setTradeAmount(Number(e.target.value) || 1)
-                }
-                className="w-20"
-              />
-              <Button type="submit" disabled={trading}>
-                {trading ? "Trading…" : "Trade"}
-              </Button>
-            </div>
-            {error && (
-              <p className="text-sm text-destructive mt-2">{error}</p>
+        <div className="flex gap-6">
+          <div className="flex-1 min-w-0">
+            <MarketHeader title={title} badge={badge} />
+            {event.demo && (
+              <p className="text-xs text-muted-foreground mt-2">
+                Demo: accelerated attention dynamics.
+              </p>
             )}
-          </form>
-        )}
-
-        {event.status === "resolved" && explanation && (
-          <div className="mt-6 p-4 rounded-lg border border-border bg-muted/30">
-            <h3 className="text-sm font-medium text-foreground mb-2">
-              Why attention moved
-            </h3>
-            <p className="text-sm text-muted-foreground">{explanation}</p>
-          </div>
-        )}
-
-        {pastWindows.length > 0 && (
-          <div className="mt-6 p-4 rounded-lg border border-border bg-muted/30">
-            <h3 className="text-sm font-medium text-foreground mb-2">
-              Past windows (recurring)
-            </h3>
-            <p className="text-sm text-muted-foreground mb-2">
-              Resolution history for this topic:
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {pastWindows.map((w) => (
-                <span
-                  key={w.id}
-                  className="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-muted text-foreground"
-                  title={new Date(w.windowEnd).toLocaleString()}
-                >
-                  {w.resolution === "up" ? "↑" : "↓"}
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
-
-        <div className="mt-6 p-4 rounded-lg border border-border bg-muted/30">
-          <h3 className="text-sm font-medium text-foreground mb-3">
-            Comments
-          </h3>
-          <form onSubmit={handleCommentSubmit} className="mb-4">
-            <textarea
-              value={commentText}
-              onChange={(e) => setCommentText(e.target.value)}
-              placeholder="Add a comment…"
-              rows={2}
-              className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring mb-2"
+            <MarketFilters
+              windowEnd={event.windowEnd}
+              pastWindowsCount={pastWindows.length}
             />
-            <Button type="submit" disabled={commentSubmitting || !commentText.trim()}>
-              {commentSubmitting ? "Posting…" : "Post"}
-            </Button>
-          </form>
-          <div className="space-y-3">
-            {comments.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No comments yet.</p>
-            ) : (
-              comments.map((c) => (
-                <div
-                  key={c.id}
-                  className="text-sm border-b border-border pb-3 last:border-0 last:pb-0"
-                >
-                  <div className="flex items-center gap-2 text-muted-foreground mb-0.5">
-                    <span className="font-medium text-foreground">
-                      {c.displayName || "Anonymous"}
-                    </span>
-                    <span className="text-xs">
-                      {new Date(c.createdAt).toLocaleString()}
-                    </span>
-                  </div>
-                  <p className="text-foreground whitespace-pre-wrap">{c.body}</p>
-                </div>
-              ))
+
+            {chartData.length > 0 && (
+              <PriceChart
+                data={chartData}
+                priceUp={event.priceUp ?? 0.5}
+                priceDown={event.priceDown ?? 0.5}
+                labelUp={event.labelUp}
+                labelDown={event.labelDown}
+                volume={event.volume}
+                windowEnd={event.windowEnd}
+              />
             )}
+
+            <div className="mt-6 space-y-3">
+              <CollapsibleSection
+                title="Market context"
+                defaultOpen={false}
+                action={{
+                  label: "Generate",
+                  onClick: handleGenerateMarketContext,
+                  loading: marketContextLoading,
+                }}
+              >
+                {marketContextLoading && !marketContext && (
+                  <p className="text-sm text-muted-foreground">
+                    Generating context…
+                  </p>
+                )}
+                {marketContextError && (
+                  <p className="text-sm text-destructive">{marketContextError}</p>
+                )}
+                {marketContext && (
+                  <p className="text-sm text-muted-foreground leading-relaxed">
+                    {marketContext}
+                  </p>
+                )}
+                {!marketContext &&
+                  !marketContextLoading &&
+                  !marketContextError && (
+                    <p className="text-sm text-muted-foreground">
+                      Click Generate to get an AI summary of what’s driving
+                      attention (Gemini + web search).
+                    </p>
+                  )}
+              </CollapsibleSection>
+            </div>
+
+            <RulesSection rules={rulesText} />
+
+            {event.status === "resolved" && explanation && (
+              <div className="mt-6 p-4 rounded-lg border border-border bg-muted/30">
+                <h3 className="text-sm font-medium text-foreground mb-2">
+                  Why attention moved
+                </h3>
+                <p className="text-sm text-muted-foreground">{explanation}</p>
+              </div>
+            )}
+
+            {pastWindows.length > 0 && (
+              <div className="mt-6 p-4 rounded-lg border border-border bg-muted/30">
+                <h3 className="text-sm font-medium text-foreground mb-2">
+                  Past windows (recurring)
+                </h3>
+                <p className="text-sm text-muted-foreground mb-2">
+                  Resolution history for this topic:
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {pastWindows.map((w) => (
+                    <span
+                      key={w.id}
+                      className="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-muted text-foreground"
+                      title={new Date(w.windowEnd).toLocaleString()}
+                    >
+                      {w.resolution === "up" ? "↑" : "↓"}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="mt-6 p-4 rounded-lg border border-border bg-muted/30">
+              <h3 className="text-sm font-medium text-foreground mb-3">
+                Comments
+              </h3>
+              <form onSubmit={handleCommentSubmit} className="mb-4">
+                <textarea
+                  value={commentText}
+                  onChange={(e) => setCommentText(e.target.value)}
+                  placeholder="Add a comment…"
+                  rows={2}
+                  className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring mb-2"
+                />
+                <Button
+                  type="submit"
+                  disabled={commentSubmitting || !commentText.trim()}
+                >
+                  {commentSubmitting ? "Posting…" : "Post"}
+                </Button>
+              </form>
+              <div className="space-y-3">
+                {comments.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    No comments yet.
+                  </p>
+                ) : (
+                  comments.map((c) => (
+                    <div
+                      key={c.id}
+                      className="text-sm border-b border-border pb-3 last:border-0 last:pb-0"
+                    >
+                      <div className="flex items-center gap-2 text-muted-foreground mb-0.5">
+                        <span className="font-medium text-foreground">
+                          {c.displayName || "Anonymous"}
+                        </span>
+                        <span className="text-xs">
+                          {new Date(c.createdAt).toLocaleString()}
+                        </span>
+                      </div>
+                      <p className="text-foreground whitespace-pre-wrap">
+                        {c.body}
+                      </p>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
           </div>
+
+          {event.status === "open" && (
+            <div className="hidden lg:block shrink-0">
+              <div className="sticky top-6">
+                <TradingPanel
+                  priceUp={event.priceUp ?? 0.5}
+                  priceDown={event.priceDown ?? 0.5}
+                  labelUp={event.labelUp}
+                  labelDown={event.labelDown}
+                  disabled={false}
+                  onTrade={handleTrade}
+                  error={tradeError || undefined}
+                  positionUp={positionUp}
+                  positionDown={positionDown}
+                />
+              </div>
+            </div>
+          )}
         </div>
-      </div>
+      </main>
     </div>
   );
 }

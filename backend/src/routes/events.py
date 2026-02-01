@@ -442,6 +442,26 @@ async def get_explanation(event_id: str):
     return {"explanation": explanation}
 
 
+@router.get("/{event_id}/market-context")
+async def get_market_context(event_id: str):
+    """Return AI-generated market context (Gemini + Google Search): why attention is fading / flat / rising."""
+    event = await db.get_event(event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    history = await db.get_index_history(event_id)
+    try:
+        from agent.explanations import market_context
+        context = market_context(
+            event["name"],
+            event["index_start"],
+            event["index_current"],
+            history,
+        )
+    except Exception:
+        context = None
+    return {"context": context}
+
+
 @router.get("/{event_id}/image")
 async def get_event_image(event_id: str):
     """Serve the generated thumbnail image for the event, if it exists."""
