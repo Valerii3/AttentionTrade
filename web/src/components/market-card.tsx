@@ -29,22 +29,42 @@ export interface AttentionEventCardData {
 
 interface AttentionEventCardProps {
   market: AttentionEventCardData;
+  /** When set, show a delete button that calls this with eventId (no navigation on click). */
+  onDelete?: (eventId: string) => void;
 }
 
 const DEFAULT_THUMBNAIL = "/event-thumbnail-placeholder.png";
 
-export function AttentionEventCard({ market }: AttentionEventCardProps) {
+export function AttentionEventCard({ market, onDelete }: AttentionEventCardProps) {
   const upPct = Math.round(market.priceUp * 100);
   const downPct = Math.round(market.priceDown * 100);
   const isOpen = market.status === "open";
   const thumbnailUrl = market.imageUrl || DEFAULT_THUMBNAIL;
+  const handleDelete = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (market.eventId && onDelete) onDelete(market.eventId);
+  };
   const content = (
     <div className="bg-card rounded-lg border border-border p-4 hover:border-muted-foreground/50 transition-colors relative h-full flex flex-col">
-      {(market.isDemo || market.demo) && (
-        <span className="absolute top-3 right-3 text-xs font-medium px-2 py-0.5 rounded bg-muted text-muted-foreground border border-border" title="Demo markets use accelerated attention dynamics.">
-          Demo
-        </span>
-      )}
+      <div className="absolute top-3 right-3 flex items-center gap-1">
+        {market.eventId && onDelete && (
+          <button
+            type="button"
+            onClick={handleDelete}
+            className="text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded p-1.5 text-xs font-medium transition-colors"
+            title="Delete event"
+            aria-label="Delete event"
+          >
+            Delete
+          </button>
+        )}
+        {(market.isDemo || market.demo) && (
+          <span className="text-xs font-medium px-2 py-0.5 rounded bg-muted text-muted-foreground border border-border" title="Demo markets use accelerated attention dynamics.">
+            Demo
+          </span>
+        )}
+      </div>
       <div className="flex gap-3 mb-2">
         <img
           src={thumbnailUrl}

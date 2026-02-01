@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { listEvents, type Event } from "@/api-client/client";
+import { deleteEvent, listEvents, type Event } from "@/api-client/client";
 import {
   AttentionEventCard,
   PlaceholderCard,
@@ -78,6 +78,20 @@ export function MarketGrid({ selectedCategory, selectedFilter }: MarketGridProps
     };
   }, [selectedCategory, selectedFilter, q]);
 
+  const handleDelete = useCallback(async (eventId: string) => {
+    try {
+      await deleteEvent(eventId);
+      setEvents((prev) => prev.filter((e) => e.id !== eventId));
+    } catch {
+      // Refetch on error so list stays in sync
+      const { events: list } = await listEvents({
+        status: selectedFilter === "Open" ? "open" : selectedFilter === "Resolved" ? "resolved" : undefined,
+        ...(q ? { q } : {}),
+      });
+      setEvents(list);
+    }
+  }, [selectedFilter, q]);
+
   if (selectedCategory !== "hackathon") {
     return (
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 p-4">
@@ -103,6 +117,7 @@ export function MarketGrid({ selectedCategory, selectedFilter }: MarketGridProps
           <AttentionEventCard
             key={market.eventId}
             market={market}
+            onDelete={handleDelete}
           />
         ))
       )}

@@ -47,9 +47,48 @@ async def init_db():
                 await conn.execute("ALTER TABLE event_comments ADD COLUMN display_name TEXT")
         await conn.commit()
 
+        # Migration: add execution_price to trades (price of side bought, 0–1) for realized PnL on close
+        cursor = await conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='trades'"
+        )
+        has_trades = (await cursor.fetchone()) is not None
+        if has_trades:
+            cursor = await conn.execute("PRAGMA table_info(trades)")
+            columns = [row[1] for row in await cursor.fetchall()]
+            if "execution_price" not in columns:
+                await conn.execute(
+                    "ALTER TABLE trades ADD COLUMN execution_price REAL"
+                )
+        await conn.commit()
+
         with open(SCHEMA_PATH) as f:
             schema = f.read()
         await conn.executescript(schema)
+        await conn.commit()
+
+        # Migration: for "Marty Supreme" events, copy demo image to event_images and set image_url in config
+        event_images_dir = os.path.join(_root, "event_images")
+        demo_image = os.path.join(_root, "demo", "marty_supreme.jpeg")
+        if os.path.isfile(demo_image):
+            cursor = await conn.execute(
+                "SELECT id, config FROM events WHERE LOWER(TRIM(name)) = 'marty supreme'"
+            )
+            for row in await cursor.fetchall():
+                event_id, config_json = row[0], row[1]
+                cfg = json.loads(config_json or "{}")
+                cfg["image_url"] = "/api/events/" + event_id + "/image"
+                await conn.execute(
+                    "UPDATE events SET config = ? WHERE id = ?",
+                    (json.dumps(cfg), event_id),
+                )
+                os.makedirs(event_images_dir, exist_ok=True)
+                out_path = os.path.join(event_images_dir, f"{event_id}.png")
+                try:
+                    from PIL import Image
+                    Image.open(demo_image).convert("RGB").save(out_path, "PNG")
+                except Exception:
+                    import shutil
+                    shutil.copy(demo_image, out_path)
         await conn.commit()
     finally:
         await conn.close()
@@ -283,7 +322,11 @@ async def get_volume(event_id: str) -> float:
 
 
 async def add_trade(
-    event_id: str, side: str, amount: float, trader_id: Optional[str] = None
+    event_id: str,
+    side: str,
+    amount: float,
+    trader_id: Optional[str] = None,
+    execution_price: Optional[float] = None,
 ) -> None:
     conn = await get_db()
     try:
@@ -298,8 +341,8 @@ async def add_trade(
                 (amount, event_id),
             )
         await conn.execute(
-            "INSERT INTO trades (event_id, side, amount, trader_id) VALUES (?, ?, ?, ?)",
-            (event_id, side, amount, trader_id),
+            "INSERT INTO trades (event_id, side, amount, trader_id, execution_price) VALUES (?, ?, ?, ?, ?)",
+            (event_id, side, amount, trader_id, execution_price),
         )
         await conn.commit()
     finally:
@@ -307,13 +350,14 @@ async def add_trade(
 
 
 async def list_trades_by_trader(trader_id: str) -> list[dict]:
-    """Return trades for a trader with event name, status, resolution (join with events)."""
+    """Return trades for a trader with event name, status, resolution, execution_price (join with events)."""
     conn = await get_db()
     try:
         cursor = await conn.execute(
             """
             SELECT t.event_id, t.side, t.amount, t.created_at,
-                   e.name AS event_name, e.status AS event_status, e.resolution
+                   e.name AS event_name, e.status AS event_status, e.resolution,
+                   t.execution_price
             FROM trades t
             JOIN events e ON e.id = t.event_id
             WHERE t.trader_id = ?
@@ -333,6 +377,7 @@ async def list_trades_by_trader(trader_id: str) -> list[dict]:
             "event_name": r[4],
             "event_status": r[5],
             "resolution": r[6],
+            "execution_price": r[7],
         }
         for r in rows
     ]
@@ -377,6 +422,100 @@ async def update_event_on_reject(event_id: str, config: dict) -> None:
         await conn.execute(
             "UPDATE events SET status = 'rejected', config = ? WHERE id = ?",
             (json.dumps(config), event_id),
+        )
+        await conn.commit()
+    finally:
+        await conn.close()
+
+
+async def delete_event(event_id: str) -> bool:
+    """Delete an event and all related rows. Returns True if an event was deleted."""
+    conn = await get_db()
+    try:
+        await conn.execute("DELETE FROM index_snapshots WHERE event_id = ?", (event_id,))
+        await conn.execute("DELETE FROM trades WHERE event_id = ?", (event_id,))
+        await conn.execute("DELETE FROM event_positions WHERE event_id = ?", (event_id,))
+        await conn.execute("DELETE FROM event_comments WHERE event_id = ?", (event_id,))
+        cursor = await conn.execute("DELETE FROM events WHERE id = ?", (event_id,))
+        await conn.commit()
+        return cursor.rowcount > 0
+    finally:
+        await conn.close()
+
+
+# ========== Profile queries ==========
+
+async def get_or_create_profile(trader_id: str, display_name: Optional[str] = None) -> dict:
+    """Get existing profile or create new one with balance=100. Returns profile dict."""
+    conn = await get_db()
+    try:
+        cursor = await conn.execute(
+            "SELECT trader_id, display_name, balance, created_at FROM profiles WHERE trader_id = ?",
+            (trader_id,),
+        )
+        row = await cursor.fetchone()
+        if row:
+            return {
+                "trader_id": row[0],
+                "display_name": row[1],
+                "balance": row[2],
+                "created_at": row[3],
+            }
+        # Create new profile with default balance
+        await conn.execute(
+            "INSERT INTO profiles (trader_id, display_name, balance) VALUES (?, ?, 100.0)",
+            (trader_id, display_name),
+        )
+        await conn.commit()
+        cursor = await conn.execute(
+            "SELECT trader_id, display_name, balance, created_at FROM profiles WHERE trader_id = ?",
+            (trader_id,),
+        )
+        row = await cursor.fetchone()
+        return {
+            "trader_id": row[0],
+            "display_name": row[1],
+            "balance": row[2],
+            "created_at": row[3],
+        }
+    finally:
+        await conn.close()
+
+
+async def get_balance(trader_id: str) -> float:
+    """Get current balance for trader. Returns 0 if profile doesn't exist."""
+    conn = await get_db()
+    try:
+        cursor = await conn.execute(
+            "SELECT balance FROM profiles WHERE trader_id = ?",
+            (trader_id,),
+        )
+        row = await cursor.fetchone()
+    finally:
+        await conn.close()
+    return float(row[0]) if row else 0.0
+
+
+async def update_balance(trader_id: str, new_balance: float) -> None:
+    """Set new balance for trader."""
+    conn = await get_db()
+    try:
+        await conn.execute(
+            "UPDATE profiles SET balance = ? WHERE trader_id = ?",
+            (new_balance, trader_id),
+        )
+        await conn.commit()
+    finally:
+        await conn.close()
+
+
+async def update_profile_display_name(trader_id: str, display_name: str) -> None:
+    """Update display name for existing profile."""
+    conn = await get_db()
+    try:
+        await conn.execute(
+            "UPDATE profiles SET display_name = ? WHERE trader_id = ?",
+            (display_name, trader_id),
         )
         await conn.commit()
     finally:

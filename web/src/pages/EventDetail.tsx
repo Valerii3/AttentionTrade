@@ -44,6 +44,8 @@ function formatChartTime(t: string, tf: Timeframe): string {
 const DEFAULT_RULES =
   "This market resolves to Up if the attention index at window end is above the start value, otherwise Down. Index is built from real-time attention signals (e.g. discussion volume).";
 
+const DEFAULT_EVENT_IMAGE = "/event-thumbnail-placeholder.png";
+
 export default function EventDetail() {
   const { id } = useParams<{ id: string }>();
   const [event, setEvent] = useState<Event | null>(null);
@@ -106,7 +108,7 @@ export default function EventDetail() {
     return () => clearInterval(t);
   }, [id, timeframe]);
 
-  const { profile } = useProfile();
+  const { profile, setBalance } = useProfile();
   const traderId = profile?.traderId;
 
   // Load position for this event when we have traderId
@@ -148,7 +150,11 @@ export default function EventDetail() {
     if (!id || !event || event.status !== "open") return;
     setTradeError("");
     try {
-      await trade(id, side, amount, traderId);
+      const result = await trade(id, side, amount, traderId);
+      // Update balance if returned
+      if (result.balance != null) {
+        setBalance(result.balance);
+      }
       await load();
       // Refresh position after trade
       if (traderId) {
@@ -185,6 +191,17 @@ export default function EventDetail() {
       setMarketContextLoading(false);
     }
   }
+
+  const netSize = Math.abs(positionUp - positionDown);
+  const showSettledPosition =
+    event?.status === "resolved" &&
+    event?.resolution != null &&
+    netSize > 0;
+  const settledPnl = showSettledPosition
+    ? event!.resolution === (positionUp >= positionDown ? "up" : "down")
+      ? netSize
+      : -netSize
+    : 0;
 
   if (loading && !event)
     return (
@@ -226,7 +243,16 @@ export default function EventDetail() {
 
         <div className="flex gap-6">
           <div className="flex-1 min-w-0">
-            <MarketHeader title={title} badge={badge} />
+            <div className="flex items-start gap-4 mb-4">
+              <img
+                src={event.imageUrl || DEFAULT_EVENT_IMAGE}
+                alt=""
+                className="w-20 h-20 rounded-lg object-cover shrink-0 bg-muted"
+              />
+              <div className="min-w-0 flex-1">
+                <MarketHeader title={title} badge={badge} />
+              </div>
+            </div>
             {event.demo && (
               <p className="text-xs text-muted-foreground mt-2">
                 Demo: accelerated attention dynamics.
@@ -380,6 +406,31 @@ export default function EventDetail() {
                   positionUp={positionUp}
                   positionDown={positionDown}
                 />
+              </div>
+            </div>
+          )}
+
+          {showSettledPosition && (
+            <div className="hidden lg:block shrink-0">
+              <div className="sticky top-6 p-4 rounded-lg border border-border bg-card">
+                <h3 className="text-sm font-medium text-foreground mb-2">
+                  Your position
+                </h3>
+                <p
+                  className={`text-xl font-semibold ${
+                    settledPnl >= 0 ? "text-success" : "text-destructive"
+                  }`}
+                >
+                  Position settled: {settledPnl >= 0 ? "+" : ""}
+                  {settledPnl}
+                </p>
+                <p
+                  className={`text-sm font-medium mt-1 ${
+                    settledPnl >= 0 ? "text-success" : "text-destructive"
+                  }`}
+                >
+                  {settledPnl >= 0 ? "Won" : "Lost"}
+                </p>
               </div>
             </div>
           )}

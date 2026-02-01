@@ -48,6 +48,8 @@ export interface ProfileTrade {
   createdAt: string;
   status: string;
   resolution: "up" | "down" | null;
+  /** Price (0–1) of the side bought at execution; used for realized PnL when position is closed. */
+  executionPrice?: number | null;
 }
 
 /** Propose an event: backend runs reasonability check (Gemini + Google Search), agent, index build, accept decision. */
@@ -123,6 +125,14 @@ export async function getEvent(id: string): Promise<Event> {
   return res.json();
 }
 
+export async function deleteEvent(id: string): Promise<void> {
+  const res = await fetch(`${BASE}/events/${id}`, { method: "DELETE" });
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    throw new Error((d as { detail?: string }).detail || res.statusText);
+  }
+}
+
 export async function getIndexHistory(
   id: string,
   params?: { interval?: string }
@@ -140,7 +150,7 @@ export async function trade(
   side: "up" | "down",
   amount: number,
   traderId?: string
-): Promise<{ ok: boolean; priceUp: number; priceDown: number }> {
+): Promise<{ ok: boolean; priceUp: number; priceDown: number; balance?: number | null }> {
   const body: Record<string, unknown> = { side, amount };
   if (traderId) body.trader_id = traderId;
   const res = await fetch(`${BASE}/events/${eventId}/trade`, {
@@ -206,6 +216,40 @@ export async function postComment(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    throw new Error(d.detail || res.statusText);
+  }
+  return res.json();
+}
+
+// ========== Profile API ==========
+
+export interface Profile {
+  traderId: string;
+  displayName: string | null;
+  balance: number;
+  createdAt: string;
+}
+
+export async function getProfile(traderId: string): Promise<Profile> {
+  const res = await fetch(`${BASE}/profile/${encodeURIComponent(traderId)}`);
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    throw new Error(d.detail || res.statusText);
+  }
+  return res.json();
+}
+
+export async function updateProfile(
+  traderId: string,
+  updates: { displayName?: string }
+): Promise<Profile> {
+  const res = await fetch(`${BASE}/profile/${encodeURIComponent(traderId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(updates),
   });
   if (!res.ok) {
     const d = await res.json().catch(() => ({}));

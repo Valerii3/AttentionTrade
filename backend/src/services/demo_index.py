@@ -28,8 +28,8 @@ def compute_demo_index(
     now_iso: str,
 ) -> float:
     """
-    Compute synthetic index for a demo event. Mean-reverting with momentum bursts.
-    Index stays around 100 with waves (momentum) and small noise; bounded roughly 85–115.
+    Compute synthetic index for a demo event. Mean-reverting with smooth, gentle movements.
+    Index stays around 100 with slow waves; bounded roughly 94–106.
     Deterministic for the same (event_id, window_start, now).
     """
     try:
@@ -41,12 +41,18 @@ def compute_demo_index(
     if elapsed_sec < 0:
         return 100.0
     seed = _seed_from_event_id(event_id)
-    # Two wave components (momentum phases) + seeded "noise" for variety
-    t = elapsed_sec / 30.0  # scale so ~1–2 min gives several cycles
-    wave1 = 6.0 * math.sin(t * 1.2)
-    wave2 = 4.0 * math.sin(t * 0.5 + (seed % 100) / 50.0)
-    # Pseudo-noise from seed and t (deterministic)
-    noise = ((seed * 17 + int(t) * 31) % 100) / 100.0 * 4.0 - 2.0
-    delta = wave1 + wave2 + noise
-    delta = max(-15.0, min(15.0, delta))
+    phase = (seed % 100) / 50.0  # seed-based phase shift
+    
+    # Scale time to hours for slower, smoother movements
+    t = elapsed_sec / 3600.0
+    
+    # Gentler waves with longer periods (smaller amplitude, slower frequency)
+    wave1 = 3.0 * math.sin(t * 0.3 + phase)  # Primary slow wave
+    wave2 = 2.0 * math.sin(t * 0.1 + phase * 0.5)  # Secondary even slower wave
+    
+    # Smaller noise component for subtle variation
+    noise = ((seed * 17 + int(t * 10) * 31) % 100) / 100.0 * 2.0 - 1.0
+    
+    delta = wave1 + wave2 + noise  # Total range: roughly -6 to +6
+    delta = max(-6.0, min(6.0, delta))
     return round(100.0 + delta, 2)

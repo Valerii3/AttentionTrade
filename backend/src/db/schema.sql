@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS trades (
   side TEXT NOT NULL,  -- up | down
   amount REAL NOT NULL,
   trader_id TEXT,  -- optional; links trade to profile
+  execution_price REAL,  -- price (0-1) of side bought at execution; for realized PnL on close
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -43,6 +44,13 @@ CREATE TABLE IF NOT EXISTS event_comments (
   trader_id TEXT,
   display_name TEXT,
   body TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS profiles (
+  trader_id TEXT PRIMARY KEY,
+  display_name TEXT,
+  balance REAL NOT NULL DEFAULT 100.0,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

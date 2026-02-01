@@ -258,3 +258,11 @@ def compute_index(
 
 def get_iso_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def parse_iso_utc(iso_str: str) -> datetime:
+    """Parse ISO 8601 string to UTC datetime for reliable comparison (handles Z and +00:00)."""
+    s = iso_str.strip()
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    return datetime.fromisoformat(s).astimezone(timezone.utc)

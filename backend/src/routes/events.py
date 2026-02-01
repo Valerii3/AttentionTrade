@@ -12,7 +12,7 @@ from backend.src.constants import market_type_to_minutes
 from backend.src.db import queries as db
 from backend.src.services.trading import prices_from_position
 from backend.src.services.index_pipeline import get_iso_now
-from backend.src.services.index_history_aggregation import aggregate_history
+from backend.src.services.index_history_aggregation import aggregate_history, interpolate_history
 from backend.src.services.research_index import build_index_via_gemini
 from backend.src.services.tools import get_available_tools
 
@@ -397,6 +397,8 @@ async def get_index_history(event_id: str, interval: Optional[str] = None):
                 interval_normalized,
                 window_start_iso=event.get("window_start"),
             )
+            # Interpolate sparse data for smoother charts
+            history = interpolate_history(history, interval_normalized, event_id=event_id)
     return {"history": history}
 
 
@@ -449,10 +451,31 @@ async def trade(event_id: str, body: TradeBody):
         raise HTTPException(status_code=404, detail="Event not found")
     if event["status"] != "open":
         raise HTTPException(status_code=409, detail="Event is not open for trading")
-    await db.add_trade(event_id, body.side, body.amount, body.trader_id)
+    # Capture execution price before the trade (market price of the side they're buying)
     net_up, net_down = await db.get_position(event_id)
     price_up, price_down = prices_from_position(net_up, net_down)
-    return {"ok": True, "priceUp": price_up, "priceDown": price_down}
+    execution_price = price_up if body.side == "up" else price_down
+    
+    # Calculate trade cost and check balance (if trader_id provided)
+    trade_cost = body.amount * execution_price
+    new_balance = None
+    if body.trader_id:
+        profile = await db.get_or_create_profile(body.trader_id)
+        current_balance = profile["balance"]
+        if current_balance < trade_cost:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Insufficient balance. Need {trade_cost:.2f}, have {current_balance:.2f}"
+            )
+        new_balance = current_balance - trade_cost
+        await db.update_balance(body.trader_id, new_balance)
+    
+    await db.add_trade(
+        event_id, body.side, body.amount, body.trader_id, execution_price
+    )
+    net_up, net_down = await db.get_position(event_id)
+    price_up, price_down = prices_from_position(net_up, net_down)
+    return {"ok": True, "priceUp": price_up, "priceDown": price_down, "balance": new_balance}
 
 
 @router.get("/{event_id}/explanation")
@@ -501,3 +524,12 @@ async def get_event(event_id: str):
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
     return await _event_to_response_async(event)
+
+
+@router.delete("/{event_id}")
+async def delete_event(event_id: str):
+    """Delete an event and all related data (snapshots, trades, positions, comments)."""
+    deleted = await db.delete_event(event_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Event not found")
+    return {"ok": True}

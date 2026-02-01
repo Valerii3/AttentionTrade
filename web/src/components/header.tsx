@@ -1,7 +1,8 @@
 import { Link, useSearchParams } from "react-router-dom";
-import { Search, HelpCircle, Menu } from "lucide-react";
+import { Search, HelpCircle, Menu, Wallet } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useProfile } from "@/contexts/profile-context";
 
 export interface HeaderProps {
   onOpenCreateEvent?: () => void;
@@ -11,6 +12,7 @@ export function Header(props: HeaderProps) {
   const { onOpenCreateEvent } = props;
   const [searchParams, setSearchParams] = useSearchParams();
   const q = searchParams.get("q") ?? "";
+  const { profile, balance } = useProfile();
 
   function handleSearchChange(e: React.ChangeEvent<HTMLInputElement>) {
     const value = e.target.value;
@@ -63,6 +65,12 @@ export function Header(props: HeaderProps) {
             <HelpCircle className="h-4 w-4" />
             <span className="hidden lg:inline">How it works</span>
           </Button>
+          {profile && balance != null && (
+            <div className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-secondary text-foreground">
+              <Wallet className="h-4 w-4 text-primary" />
+              <span className="font-medium">${balance.toFixed(2)}</span>
+            </div>
+          )}
           <Link to="/profile">
             <Button variant="ghost" className="text-foreground hover:text-foreground/80">
               Profile

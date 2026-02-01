@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 
 load_dotenv()  # Load .env from cwd (project root when running uvicorn from project root)
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 # Project root on path so agent can be imported
@@ -23,7 +23,7 @@ if _project_root not in sys.path:
 from backend.src.db import queries as db
 from backend.src.routes.events import router as events_router
 from backend.src.routes.profile import router as profile_router
-from backend.src.services.index_pipeline import compute_index, get_iso_now, build_index
+from backend.src.services.index_pipeline import compute_index, get_iso_now, build_index, parse_iso_utc
 from backend.src.services.trading import prices_from_position
 from backend.src.services.demo_index import compute_demo_index
 
@@ -50,9 +50,9 @@ async def tick_index():
 
 
 async def tick_demo_index():
-    """Every 15s: update synthetic index for open demo events only."""
+    """Every 5 min: update synthetic index for open demo events only."""
     while True:
-        await asyncio.sleep(15)
+        await asyncio.sleep(300)  # 5 minutes
         events = await db.list_events(status="open")
         now = get_iso_now()
         for event in events:
@@ -94,6 +94,42 @@ async def open_next_window(resolved_event: dict) -> None:
     _baseline_activity[new_id] = activity
 
 
+def _window_end_passed(event: dict, now_iso: str) -> bool:
+    """True if event's window_end is at or before now (robust datetime comparison)."""
+    try:
+        window_end_dt = parse_iso_utc(event["window_end"])
+        now_dt = parse_iso_utc(now_iso)
+        return window_end_dt <= now_dt
+    except (ValueError, TypeError):
+        return False
+
+
+async def _resolve_one_event(event: dict) -> None:
+    """Resolve one event and open next window (recurring)."""
+    index_start = event["index_start"]
+    index_current = event["index_current"]
+    resolution = "up" if index_current > index_start else "down"
+    snapshots = await db.get_index_history(event["id"])
+    try:
+        from agent.explanations import explain_index_movement
+        explanation = explain_index_movement(
+            event["name"], index_start, index_current, snapshots
+        )
+    except Exception:
+        explanation = f"Attention {'rose' if resolution == 'up' else 'fell'} (index {index_start} -> {index_current})."
+    await db.resolve_event(event["id"], resolution, explanation)
+    await open_next_window(event)
+
+
+async def run_resolution_catch_up() -> None:
+    """On startup: resolve any open events whose window_end has already passed."""
+    events = await db.list_events(status="open")
+    now = get_iso_now()
+    for event in events:
+        if _window_end_passed(event, now):
+            await _resolve_one_event(event)
+
+
 async def check_resolutions():
     """Every 30s: resolve events whose window_end has passed, then open next window (recurring)."""
     while True:
@@ -101,25 +137,14 @@ async def check_resolutions():
         events = await db.list_events(status="open")
         now = get_iso_now()
         for event in events:
-            if event["window_end"] <= now:
-                index_start = event["index_start"]
-                index_current = event["index_current"]
-                resolution = "up" if index_current > index_start else "down"
-                snapshots = await db.get_index_history(event["id"])
-                try:
-                    from agent.explanations import explain_index_movement
-                    explanation = explain_index_movement(
-                        event["name"], index_start, index_current, snapshots
-                    )
-                except Exception:
-                    explanation = f"Attention {'rose' if resolution == 'up' else 'fell'} (index {index_start} -> {index_current})."
-                await db.resolve_event(event["id"], resolution, explanation)
-                await open_next_window(event)
+            if _window_end_passed(event, now):
+                await _resolve_one_event(event)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await db.init_db()
+    await run_resolution_catch_up()
     task_index = asyncio.create_task(tick_index())
     task_demo = asyncio.create_task(tick_demo_index())
     task_resolve = asyncio.create_task(check_resolutions())
@@ -145,3 +170,18 @@ app.add_middleware(
 )
 app.include_router(events_router)
 app.include_router(profile_router)
+
+
+@app.post("/events/{event_id}/resolve")
+async def resolve_event_now(event_id: str):
+    """Force resolution for an open event whose window_end has passed (dev/manual catch-up)."""
+    event = await db.get_event(event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    if event["status"] != "open":
+        raise HTTPException(status_code=400, detail="Event is not open for resolution")
+    now = get_iso_now()
+    if not _window_end_passed(event, now):
+        raise HTTPException(status_code=400, detail="Event window has not ended yet")
+    await _resolve_one_event(event)
+    return {"ok": True}
